@@ -102,8 +102,11 @@ phase at triple speed.
 - **Enter** / **Space** ends the turn. **N** starts a new game. **Esc**
   quits; the game is saved and resumes next launch.
 
-The counters are hand-drawn 32x16 pixel sprites of what each formation
-actually fielded (`Sprites.js`): Kampfgruppe Peiper's **Tiger II**s, the
+The counters are 48x24 pixel sprites of what each formation actually
+fielded (`Sprites.js`), built the way a sprite tool would: each vehicle is
+a stack of shaded shapes rasterised to a fixed palette, then outlined,
+lit along the top edge and shadowed underneath, and drawn at an integer
+pixel scale so they stay crisp when zoomed: Kampfgruppe Peiper's **Tiger II**s, the
 Panzer divisions' and Lehr's **Panthers**, **Panzer IV**s for
 Führer-Begleit and 9. Panzer, **SdKfz 251** half-tracks, **Puma** armoured
 cars, **Pak 40**s, **leFH 18** howitzers and the Werfer brigade's
