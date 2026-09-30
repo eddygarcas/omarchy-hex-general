@@ -69,6 +69,15 @@ an explosion -- before play returns to you.
   strength, the defender's terrain and how long it has been dug in. Units
   that sit still entrench (up to three levels, shown as gold pips).
 - **Artillery** fires from up to three hexes away and takes no return fire.
+- **Replacements**: a damaged unit that spends a whole turn without moving
+  or firing regains one step of strength at the end of it -- as long as it
+  can trace a supply line to its own map edge through hexes free of enemy
+  units and enemy zones of control (friendly-held hexes count as open).
+  A unit that is **cut off** gets a red marker and recovers nothing until
+  the pocket is opened again.
+- **Movement arrows**: every move of the battle is drawn campaign-map
+  style -- red arrows for the Axis, blue for the Allies -- so you can read
+  the whole offensive at a glance. Press **M** to hide or show them.
 - **Enter** / **Space** ends the turn. **N** starts a new game. **Esc** or a
   click outside the board closes the panel without losing the game.
 

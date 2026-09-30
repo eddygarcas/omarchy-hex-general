@@ -32,6 +32,7 @@ Item {
   property int rev: 0
   property string phase: "axis"
   property var hoverHex: null   // axial {q, r} under the cursor, or null
+  property bool showTrails: true
 
   // Animation playback: `anim` is the event being shown (see Engine's
   // moveEvent/attackEvent), `animT` runs 0 -> 1 over its duration.
@@ -191,7 +192,8 @@ Item {
     if (unit) {
       var t = Units.typeOf(unit)
       line += "\n" + unit.name + " -- " + t.label + " " + unit.strength + "/10" +
-              (unit.entrenchment ? ", dug in " + unit.entrenchment : "")
+              (unit.entrenchment ? ", dug in " + unit.entrenchment : "") +
+              (Engine.isSupplied(gameState, unit) ? "" : " -- CUT OFF from supply, no replacements")
       var sel = selectedUnit()
       if (sel && unit.side === "allies" && Engine.canAttack(gameState, sel, unit)) {
         var odds = Engine.combatOdds(gameState, sel, unit)
@@ -233,6 +235,7 @@ Item {
           case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space: root.endTurn(); break
           case Qt.Key_Tab: root.selectNext(); break
           case Qt.Key_N: root.newGame(); break
+          case Qt.Key_M: root.showTrails = !root.showTrails; break
           default: return
         }
         event.accepted = true
@@ -605,7 +608,7 @@ Item {
                     }
                   }
 
-                  function unit(ctx, unit, cx, cy, s, isSelected, isTarget) {
+                  function unit(ctx, unit, cx, cy, s, isSelected, isTarget, cutOff) {
                     var u = s * 0.5
                     var spent = unit.side === "axis" && unit.moved && unit.attacked
                     ctx.save()
@@ -632,12 +635,67 @@ Item {
                       ctx.fillRect(bx + bw + s * 0.05, by + bh - (e + 1) * bh * 0.3, s * 0.1, bh * 0.22)
                     }
 
+                    if (cutOff) {
+                      var mx = cx + s * 0.55, my = cy - s * 0.5
+                      ctx.fillStyle = "#d8231b"
+                      ctx.beginPath(); ctx.arc(mx, my, s * 0.17, 0, Math.PI * 2); ctx.fill()
+                      ctx.strokeStyle = "#fff"
+                      ctx.lineWidth = Math.max(1.5, s * 0.06)
+                      ctx.beginPath()
+                      ctx.moveTo(mx - s * 0.08, my - s * 0.08); ctx.lineTo(mx + s * 0.08, my + s * 0.08)
+                      ctx.moveTo(mx + s * 0.08, my - s * 0.08); ctx.lineTo(mx - s * 0.08, my + s * 0.08)
+                      ctx.stroke()
+                    }
+
                     if (isSelected || isTarget) {
                       hexPath(ctx, cx, cy, s - 2)
                       ctx.lineWidth = 3
                       ctx.strokeStyle = isSelected ? "#101010" : "#d8231b"
                       ctx.stroke()
                     }
+                  }
+
+                  // ---- movement arrows -----------------------------------------
+                  // One sweeping arrow per unit through every hex it has moved
+                  // to, campaign-map style: red for the Axis, blue for the Allies.
+                  function arrows(ctx, state, s) {
+                    var chains = {}, order = []
+                    state.moves.forEach(function (m) {
+                      if (!chains[m.unitId]) { chains[m.unitId] = { side: m.side, pts: [centerOf(m.from.q, m.from.r)] }; order.push(m.unitId) }
+                      chains[m.unitId].pts.push(centerOf(m.to.q, m.to.r))
+                    })
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    order.forEach(function (id) {
+                      var chain = chains[id]
+                      var pts = chain.pts
+                      var color = chain.side === "axis" ? "rgba(214,40,30,0.9)" : "rgba(30,95,200,0.9)"
+                      for (var pass = 0; pass < 2; pass++) {
+                        ctx.strokeStyle = pass === 0 ? "rgba(255,255,255,0.75)" : color
+                        ctx.lineWidth = pass === 0 ? s * 0.22 : s * 0.11
+                        ctx.beginPath()
+                        ctx.moveTo(pts[0].x, pts[0].y)
+                        for (var i = 1; i < pts.length - 1; i++)
+                          ctx.quadraticCurveTo(pts[i].x, pts[i].y, (pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2)
+                        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
+                        ctx.stroke()
+                      }
+                      var tip = pts[pts.length - 1], prev = pts[pts.length - 2]
+                      var ang = Math.atan2(tip.y - prev.y, tip.x - prev.x)
+                      var head = s * 0.42
+                      ctx.fillStyle = color
+                      ctx.beginPath()
+                      ctx.moveTo(tip.x + Math.cos(ang) * head * 0.5, tip.y + Math.sin(ang) * head * 0.5)
+                      ctx.lineTo(tip.x + Math.cos(ang + 2.5) * head, tip.y + Math.sin(ang + 2.5) * head)
+                      ctx.lineTo(tip.x + Math.cos(ang - 2.5) * head, tip.y + Math.sin(ang - 2.5) * head)
+                      ctx.closePath()
+                      ctx.fill()
+                      ctx.strokeStyle = "rgba(255,255,255,0.75)"
+                      ctx.lineWidth = 1
+                      ctx.stroke()
+                      ctx.fillStyle = color
+                      ctx.beginPath(); ctx.arc(pts[0].x, pts[0].y, s * 0.1, 0, Math.PI * 2); ctx.fill()
+                    })
                   }
 
                   // ---- combat effects ------------------------------------------
@@ -742,6 +800,21 @@ Item {
                   }
                 }
 
+                // ---- history layer: movement arrows for the whole battle -------
+                Canvas {
+                  id: trailCanvas
+                  anchors.fill: terrainCanvas
+                  visible: root.showTrails
+                  property int paintRev: root.rev
+                  onPaintRevChanged: requestPaint()
+                  onWidthChanged: requestPaint()
+                  onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    draw.arrows(ctx, root.gameState, root.hexSize)
+                  }
+                }
+
                 // ---- dynamic layer: highlights, flags, units, effects ----------
                 Canvas {
                   id: unitCanvas
@@ -785,7 +858,7 @@ Item {
                         var unit = Engine.unitAt(state, a.q, a.r)
                         if (unit && unit.id !== movingId) {
                           var isTarget = targets.some(function (t) { return t.id === unit.id })
-                          draw.unit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget)
+                          draw.unit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget, !Engine.isSupplied(state, unit))
                         }
 
                         if (hover && hover.q === a.q && hover.r === a.r) {
@@ -802,7 +875,7 @@ Item {
                       var from = draw.centerOf(anim.from.q, anim.from.r)
                       var to = draw.centerOf(anim.to.q, anim.to.r)
                       var f = draw.ease(root.animT)
-                      if (mover) draw.unit(ctx, mover, from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f, s, false, false)
+                      if (mover) draw.unit(ctx, mover, from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f, s, false, false, false)
                     } else if (anim.kind === "attack") {
                       draw.shot(ctx, anim, root.animT, s)
                     }
@@ -981,7 +1054,7 @@ Item {
 
             Text {
               Layout.fillWidth: true
-              text: "Click a unit, then a highlighted hex to move or a red-ringed enemy to attack. Tab: next unit. Esc: close."
+              text: "Click a unit, then a highlighted hex to move or a red-ringed enemy to attack. Tab: next unit. M: movement arrows. Esc: close."
               font.pixelSize: Style.font.caption
               color: Color.foreground
               opacity: 0.5

@@ -23,6 +23,7 @@ function createState() {
     }),
     phase: "axis",          // "axis" while the player acts, "allies" during the AI phase
     ai: null,               // per-phase AI bookkeeping, see beginAlliesPhase
+    moves: [],              // every move made, for the campaign-map arrows
     arrived: {},            // reinforcement index -> true once placed
     log: ["Turn 1 -- Axis phase. Move your Kampfgruppen west across the river."],
     selectedUnitId: null,
@@ -148,12 +149,57 @@ function moveUnit(state, unitId, q, r) {
   if (!unit || unit.moved || unit.attacked) return false
   var options = reachable(state, unit)
   if (options[Hex.key(q, r)] === undefined) return false
+  state.moves.push({ unitId: unit.id, side: unit.side, turn: state.turn, from: { q: unit.q, r: unit.r }, to: { q: q, r: r } })
   unit.q = q
   unit.r = r
   unit.moved = true
   unit.entrenchment = 0
   claimObjective(state, unit)
   return true
+}
+
+// A unit is in supply if it can trace a path to its own map edge (east
+// for the Axis, west for the Allies) through hexes that hold no enemy
+// unit and are not in enemy zone of control -- unless a friendly unit
+// holds that hex.
+function isSupplied(state, unit) {
+  var homeCol = unit.side === "axis" ? Scenario.WIDTH - 1 : 0
+  var seen = {}
+  var stack = [{ q: unit.q, r: unit.r }]
+  seen[Hex.key(unit.q, unit.r)] = true
+  while (stack.length > 0) {
+    var h = stack.pop()
+    if (Hex.axialToOffset(h.q, h.r).col === homeCol) return true
+    var ns = Hex.neighbors(h.q, h.r)
+    for (var i = 0; i < ns.length; i++) {
+      var n = ns[i]
+      var k = Hex.key(n.q, n.r)
+      if (seen[k]) continue
+      var terrain = terrainAt(state, n.q, n.r)
+      if (!terrain || !terrain.passable) continue
+      var occupant = unitAt(state, n.q, n.r)
+      if (occupant && occupant.side !== unit.side) continue
+      if (!occupant && inEnemyZoc(state, unit.side, n.q, n.r)) continue
+      seen[k] = true
+      stack.push(n)
+    }
+  }
+  return false
+}
+
+// Damaged units that rested (no move, no shot) and are in supply take one
+// step of replacements a turn. Cut-off units get nothing.
+function replacements(state, side) {
+  var recovered = 0, cutOff = 0
+  livingUnits(state, side).forEach(function (u) {
+    if (u.strength >= 10 || u.moved || u.attacked) return
+    if (!isSupplied(state, u)) { cutOff++; return }
+    u.strength = Math.min(10, u.strength + 1)
+    recovered++
+  })
+  var who = side === "axis" ? "Axis" : "Allied"
+  if (recovered > 0) state.log.unshift("Replacements reach " + recovered + " " + who + " unit" + (recovered > 1 ? "s" : "") + ".")
+  if (cutOff > 0) state.log.unshift(cutOff + " " + who + " unit" + (cutOff > 1 ? "s are" : " is") + " cut off from supply -- no replacements.")
 }
 
 function attackTargets(state, unit) {
@@ -227,8 +273,10 @@ function totalObjectivePoints(state) {
   return state.objectives.reduce(function (s, o) { return s + o.points }, 0)
 }
 
-// Units that sat still dig in (up to 3 levels); everyone gets a fresh turn.
+// End of a side's turn: replacements, then units that sat still dig in
+// (up to 3 levels), then everyone gets a fresh turn.
 function resetPhaseFlags(state, side) {
+  replacements(state, side)
   state.units.forEach(function (u) {
     if (u.side !== side) return
     if (!u.moved) u.entrenchment = Math.min(3, u.entrenchment + 1)
