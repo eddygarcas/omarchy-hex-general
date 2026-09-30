@@ -33,6 +33,7 @@ Item {
   property string phase: "axis"
   property var hoverHex: null   // axial {q, r} under the cursor, or null
   property bool showTrails: true
+  property bool airMode: false   // waiting for the player to pick an air-strike target
 
   // Animation playback: `anim` is the event being shown (see Engine's
   // moveEvent/attackEvent), `animT` runs 0 -> 1 over its duration.
@@ -63,6 +64,7 @@ Item {
     animQueue = []
     gameState = Engine.createState()
     phase = "axis"
+    airMode = false
     hoverHex = null
     rev++
   }
@@ -85,10 +87,29 @@ Item {
     select(units[(idx + 1) % units.length])
   }
 
+  function canAir() {
+    root.rev
+    return phase === "axis" && !busy && !gameState.gameOver && Engine.airAvailable(gameState) && gameState.airStrikes > 0
+  }
+
+  function toggleAirMode() {
+    airMode = !airMode && canAir()
+  }
+
   function handleHexClick(q, r) {
     if (gameState.gameOver || busy) return
     var sel = selectedUnit()
     var clicked = Engine.unitAt(gameState, q, r)
+
+    if (airMode) {
+      if (clicked && clicked.side === "allies") {
+        var raid = Engine.axisAirStrike(gameState, clicked.id)
+        airMode = false
+        rev++
+        if (raid) play([raid])
+      }
+      return
+    }
 
     if (clicked && clicked.side === "axis") {
       select(sel && clicked.id === sel.id ? null : clicked)
@@ -119,6 +140,7 @@ Item {
   function endTurn() {
     if (gameState.gameOver) { newGame(); return }
     if (busy) return
+    airMode = false
     Engine.resetPhaseFlags(gameState, "axis")
     Engine.beginAlliesPhase(gameState)
     gameState.selectedUnitId = null
@@ -156,8 +178,8 @@ Item {
     animQueue = animQueue.slice(1)
     anim = next
     animT = 0
-    animator.duration = next.kind === "move"
-      ? 420 + 220 * Hex.distance(next.from, next.to)
+    animator.duration = next.kind === "move" ? 420 + 220 * Hex.distance(next.from, next.to)
+      : next.kind === "air" ? (next.destroyed ? 1800 : 1500)
       : (next.destroyed ? 1300 : 1000)
     animator.start()
   }
@@ -195,12 +217,23 @@ Item {
               (unit.entrenchment ? ", dug in " + unit.entrenchment : "") +
               (Engine.isSupplied(gameState, unit) ? "" : " -- CUT OFF from supply, no replacements")
       var sel = selectedUnit()
-      if (sel && unit.side === "allies" && Engine.canAttack(gameState, sel, unit)) {
+      if (airMode && unit.side === "allies") {
+        var cover = terrain.defBonus > 0 || unit.entrenchment >= 2
+        line += "\nAir strike target -- " + (cover ? "in cover, 1 step" : "in the open, 1-2 steps")
+      } else if (sel && unit.side === "allies" && Engine.canAttack(gameState, sel, unit)) {
         var odds = Engine.combatOdds(gameState, sel, unit)
         line += "\nAttack odds " + odds.toFixed(1) + ":1 -- " + Engine.oddsLabel(odds)
       }
     }
     return line
+  }
+
+  function weatherText() {
+    root.rev
+    var now = Engine.currentWeather(gameState)
+    var next = Engine.weatherAt(gameState, gameState.turn + 1)
+    return "Weather: " + now.label + (now.air ? " -- air support flies" : (now.movePenalty ? " -- movement -" + now.movePenalty + ", no air" : " -- no air")) +
+           "   |   Forecast: " + next.label
   }
 
   PanelWindow {
@@ -231,11 +264,12 @@ Item {
 
       Keys.onPressed: function (event) {
         switch (event.key) {
-          case Qt.Key_Escape: root.close(); break
+          case Qt.Key_Escape: if (root.airMode) root.airMode = false; else root.close(); break
           case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space: root.endTurn(); break
           case Qt.Key_Tab: root.selectNext(); break
           case Qt.Key_N: root.newGame(); break
           case Qt.Key_M: root.showTrails = !root.showTrails; break
+          case Qt.Key_A: root.toggleAirMode(); break
           default: return
         }
         event.accepted = true
@@ -272,6 +306,12 @@ Item {
               font.pixelSize: Style.font.caption
               color: root.phase === "allies" ? Color.accent : Color.foreground
               opacity: root.phase === "allies" ? 1 : 0.7
+            }
+            Text {
+              text: root.weatherText()
+              font.pixelSize: Style.font.caption
+              color: Color.foreground
+              opacity: 0.7
             }
           }
 
@@ -698,8 +738,92 @@ Item {
                     })
                   }
 
+                  // ---- weather overlay -----------------------------------------
+                  function weather(ctx, code, w, h, s) {
+                    if (code === "overcast") {
+                      ctx.fillStyle = "rgba(150,158,168,0.16)"
+                      ctx.fillRect(0, 0, w, h)
+                    } else if (code === "snow") {
+                      ctx.fillStyle = "rgba(190,196,204,0.14)"
+                      ctx.fillRect(0, 0, w, h)
+                      ctx.fillStyle = "rgba(255,255,255,0.8)"
+                      for (var i = 0; i < 260; i++) {
+                        var x = noise(i, 7, 1) * w, y = noise(i, 7, 2) * h, rad = 1 + noise(i, 7, 3) * s * 0.05
+                        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill()
+                      }
+                    }
+                  }
+
                   // ---- combat effects ------------------------------------------
                   function ease(t) { return t * t * (3 - 2 * t) }
+
+                  function explosion(ctx, b, e, s, destroyed) {
+                    var scale = destroyed ? 1.5 : 1
+                    var radius = s * (0.25 + 0.85 * e) * scale
+                    var alpha = 1 - e
+                    ctx.fillStyle = "rgba(255,110,20," + (alpha * 0.55) + ")"
+                    ctx.beginPath(); ctx.arc(b.x, b.y, radius, 0, Math.PI * 2); ctx.fill()
+                    ctx.fillStyle = "rgba(255,225,90," + alpha + ")"
+                    ctx.beginPath(); ctx.arc(b.x, b.y, radius * 0.55, 0, Math.PI * 2); ctx.fill()
+                    ctx.strokeStyle = "rgba(255,240,180," + alpha + ")"
+                    ctx.lineWidth = Math.max(1.5, s * 0.06)
+                    for (var i = 0; i < 8; i++) {
+                      var ang = i * Math.PI / 4 + e * 0.6
+                      ctx.beginPath()
+                      ctx.moveTo(b.x + Math.cos(ang) * radius * 0.6, b.y + Math.sin(ang) * radius * 0.6)
+                      ctx.lineTo(b.x + Math.cos(ang) * radius * (1.1 + e * 0.5), b.y + Math.sin(ang) * radius * (1.1 + e * 0.5))
+                      ctx.stroke()
+                    }
+                    if (destroyed) {
+                      for (var k = 0; k < 4; k++) {
+                        var sx = b.x + (k - 1.5) * s * 0.35
+                        var sy = b.y - s * (0.2 + e * 1.4) - k * s * 0.15
+                        ctx.fillStyle = "rgba(70,70,70," + (alpha * 0.7) + ")"
+                        ctx.beginPath(); ctx.arc(sx, sy, s * (0.2 + e * 0.35), 0, Math.PI * 2); ctx.fill()
+                      }
+                    }
+                  }
+
+                  function plane(ctx, x, y, heading, u, color) {
+                    ctx.save()
+                    ctx.translate(x, y)
+                    ctx.rotate(heading)
+                    ctx.fillStyle = color
+                    ctx.beginPath(); ctx.ellipse(-u * 0.9, -u * 0.12, u * 1.8, u * 0.24); ctx.fill()
+                    ctx.beginPath()
+                    ctx.moveTo(-u * 0.1, 0); ctx.lineTo(-u * 0.35, -u * 0.95); ctx.lineTo(u * 0.15, -u * 0.95)
+                    ctx.lineTo(u * 0.3, 0); ctx.lineTo(u * 0.15, u * 0.95); ctx.lineTo(-u * 0.35, u * 0.95)
+                    ctx.closePath(); ctx.fill()
+                    ctx.beginPath()
+                    ctx.moveTo(-u * 0.9, 0); ctx.lineTo(-u * 0.95, -u * 0.4); ctx.lineTo(-u * 0.65, -u * 0.4)
+                    ctx.lineTo(-u * 0.55, 0); ctx.lineTo(-u * 0.65, u * 0.4); ctx.lineTo(-u * 0.95, u * 0.4)
+                    ctx.closePath(); ctx.fill()
+                    ctx.restore()
+                  }
+
+                  // Fighter-bomber sweeps in from its side's map edge, bombs, and flies on.
+                  function airRaid(ctx, ev, t, s, w) {
+                    var b = centerOf(ev.to.q, ev.to.r)
+                    var fromWest = ev.side === "allies"
+                    var x0 = fromWest ? -s * 2 : w + s * 2, x1 = fromWest ? w + s * 2 : -s * 2
+                    var f = t
+                    var px = x0 + (x1 - x0) * f
+                    var arrive = (b.x - x0) / (x1 - x0)
+                    var py = b.y - s * 1.2 - Math.abs(f - arrive) * s * 2.2
+                    var heading = fromWest ? 0 : Math.PI
+                    var color = fromWest ? "#2f4a7a" : "#3a3a3a"
+                    if (f > arrive - 0.12 && f < arrive) {
+                      ctx.strokeStyle = "rgba(0,0,0,0.6)"
+                      ctx.lineWidth = Math.max(1.5, s * 0.06)
+                      var bf = (f - (arrive - 0.12)) / 0.12
+                      var bx = px + (b.x - px) * bf, by = py + (b.y - py) * bf
+                      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(bx, by); ctx.stroke()
+                      ctx.fillStyle = "#222"
+                      ctx.beginPath(); ctx.arc(bx, by, Math.max(2, s * 0.08), 0, Math.PI * 2); ctx.fill()
+                    }
+                    if (f >= arrive) explosion(ctx, b, Math.min(1, (f - arrive) / (1 - arrive)), s, ev.destroyed)
+                    plane(ctx, px, py, heading, s * 0.55, color)
+                  }
 
                   function shot(ctx, ev, t, s) {
                     var a = centerOf(ev.from.q, ev.from.r)
@@ -723,31 +847,7 @@ Item {
                       ctx.beginPath(); ctx.arc(px, py, Math.max(2, s * 0.08), 0, Math.PI * 2); ctx.fill()
                       return
                     }
-                    var e = (t - flight) / (1 - flight)
-                    var scale = ev.destroyed ? 1.5 : 1
-                    var radius = s * (0.25 + 0.85 * e) * scale
-                    var alpha = 1 - e
-                    ctx.fillStyle = "rgba(255,110,20," + (alpha * 0.55) + ")"
-                    ctx.beginPath(); ctx.arc(b.x, b.y, radius, 0, Math.PI * 2); ctx.fill()
-                    ctx.fillStyle = "rgba(255,225,90," + alpha + ")"
-                    ctx.beginPath(); ctx.arc(b.x, b.y, radius * 0.55, 0, Math.PI * 2); ctx.fill()
-                    ctx.strokeStyle = "rgba(255,240,180," + alpha + ")"
-                    ctx.lineWidth = Math.max(1.5, s * 0.06)
-                    for (var i = 0; i < 8; i++) {
-                      var ang = i * Math.PI / 4 + e * 0.6
-                      ctx.beginPath()
-                      ctx.moveTo(b.x + Math.cos(ang) * radius * 0.6, b.y + Math.sin(ang) * radius * 0.6)
-                      ctx.lineTo(b.x + Math.cos(ang) * radius * (1.1 + e * 0.5), b.y + Math.sin(ang) * radius * (1.1 + e * 0.5))
-                      ctx.stroke()
-                    }
-                    if (ev.destroyed) {
-                      for (var k = 0; k < 4; k++) {
-                        var sx = b.x + (k - 1.5) * s * 0.35
-                        var sy = b.y - s * (0.2 + e * 1.4) - k * s * 0.15
-                        ctx.fillStyle = "rgba(70,70,70," + (alpha * 0.7) + ")"
-                        ctx.beginPath(); ctx.arc(sx, sy, s * (0.2 + e * 0.35), 0, Math.PI * 2); ctx.fill()
-                      }
-                    }
+                    explosion(ctx, b, (t - flight) / (1 - flight), s, ev.destroyed)
                   }
                 }
 
@@ -824,10 +924,12 @@ Item {
                   property var paintHover: root.hoverHex
                   property real paintT: root.animT
                   property var paintAnim: root.anim
+                  property bool paintAir: root.airMode
                   onPaintRevChanged: requestPaint()
                   onPaintHoverChanged: requestPaint()
                   onPaintTChanged: requestPaint()
                   onPaintAnimChanged: requestPaint()
+                  onPaintAirChanged: requestPaint()
                   onWidthChanged: requestPaint()
 
                   onPaint: {
@@ -843,6 +945,8 @@ Item {
                     var movingId = anim && anim.kind === "move" ? anim.unitId : null
                     var row, col, a, c
 
+                    draw.weather(ctx, Engine.weatherCodeAt(state, state.turn), width, height, s)
+
                     for (row = 0; row < Scenario.HEIGHT; row++)
                       for (col = 0; col < Scenario.WIDTH; col++) {
                         a = Hex.offsetToAxial(col, row)
@@ -857,7 +961,7 @@ Item {
 
                         var unit = Engine.unitAt(state, a.q, a.r)
                         if (unit && unit.id !== movingId) {
-                          var isTarget = targets.some(function (t) { return t.id === unit.id })
+                          var isTarget = root.airMode ? unit.side === "allies" : targets.some(function (t) { return t.id === unit.id })
                           draw.unit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget, !Engine.isSupplied(state, unit))
                         }
 
@@ -878,6 +982,8 @@ Item {
                       if (mover) draw.unit(ctx, mover, from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f, s, false, false, false)
                     } else if (anim.kind === "attack") {
                       draw.shot(ctx, anim, root.animT, s)
+                    } else if (anim.kind === "air") {
+                      draw.airRaid(ctx, anim, root.animT, s, width)
                     }
                   }
 
@@ -941,10 +1047,10 @@ Item {
                     var u = root.selectedUnit()
                     if (!u) return ""
                     var t = Units.typeOf(u)
-                    return t.label + " -- strength " + u.strength + "/10 -- move " + t.move +
+                    return t.label + " -- strength " + u.strength + "/10 -- move " + Engine.moveAllowanceOf(gameState, u) +
                            (t.range > 1 ? " -- range " + t.range : "") +
                            (u.entrenchment ? " -- dug in " + u.entrenchment : "") +
-                           (u.overrun && !u.moved ? "\nOverrun! May still advance " + Engine.moveAllowanceOf(u) + " MP."
+                           (u.overrun && !u.moved ? "\nOverrun! May still advance " + Engine.moveAllowanceOf(gameState, u) + " MP."
                             : (u.attacked ? "\nHas fired this turn." : (u.moved ? "\nHas moved; may still attack." : "")))
                   }
                   font.pixelSize: Style.font.caption
@@ -1036,6 +1142,29 @@ Item {
 
             Rectangle {
               Layout.fillWidth: true
+              height: Style.space(34)
+              radius: Style.cornerRadius
+              visible: { root.rev; return root.phase === "axis" && !root.gameState.gameOver && Engine.airAvailable(root.gameState) }
+              color: root.airMode ? "#d8231b" : Color.popups.background
+              border.color: Color.accent
+              border.width: 1
+              opacity: root.canAir() || root.airMode ? 1 : 0.45
+              Text {
+                anchors.centerIn: parent
+                text: {
+                  root.rev
+                  if (root.airMode) return "Click an enemy to bomb -- Esc cancels"
+                  return "Luftwaffe strike (A) -- " + root.gameState.airStrikes + " sortie" + (root.gameState.airStrikes === 1 ? "" : "s") + " left"
+                }
+                color: root.airMode ? "#ffffff" : Color.foreground
+                font.bold: true
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea { anchors.fill: parent; onClicked: root.toggleAirMode() }
+            }
+
+            Rectangle {
+              Layout.fillWidth: true
               height: Style.space(40)
               radius: Style.cornerRadius
               color: Color.accent
@@ -1055,7 +1184,7 @@ Item {
 
             Text {
               Layout.fillWidth: true
-              text: "Click a unit, then a highlighted hex to move or a red-ringed enemy to attack. Tab: next unit. M: movement arrows. Esc: close."
+              text: "Click a unit, then a highlighted hex to move or a red-ringed enemy to attack. Tab: next unit. A: air strike. M: movement arrows. Esc: close."
               font.pixelSize: Style.font.caption
               color: Color.foreground
               opacity: 0.5

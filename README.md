@@ -71,6 +71,15 @@ an explosion -- before play returns to you.
 - **Artillery** fires from up to three hexes away and takes no return fire.
 - **Overrun**: a unit that has not moved yet and destroys an adjacent enemy
   may still advance, with half its movement points, to exploit the gap.
+- **Weather** changes every turn and is forecast a turn ahead. Fog and
+  snowstorms ground all aircraft; a snowstorm also costs every unit one
+  movement point (roads still cost 1, so they matter more). Historically
+  the fog lifted after a week -- expect clear skies from around turn 8.
+- **Air support** flies on clear turns only. The Allies get two sorties a
+  turn, aimed at your strongest units in the open; you get one Luftwaffe
+  sortie: press **A** (or the button), then click any enemy. A strike
+  costs 1-2 steps in the open, only 1 in forest, towns or against dug-in
+  troops, and takes no return fire.
 - **Replacements**: a damaged unit that spends a whole turn without moving
   or firing regains one step of strength at the end of it -- as long as it
   can trace a supply line to its own map edge through hexes free of enemy

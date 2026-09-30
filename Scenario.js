@@ -136,7 +136,7 @@ function buildUnits() {
 // (or the nearest free hex if the entry hex is occupied).
 var REINFORCEMENTS = [
   { turn: 3, side: "axis",   type: "armor",         name: "Führer-Begleit-Brigade", col: 15, row: 4 },
-  { turn: 4, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2 },
-  { turn: 6, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5 },
-  { turn: 8, side: "allies", type: "armor",         name: "4th Armored (CCA)",      col: 0,  row: 9 }
+  { turn: 6, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2 },
+  { turn: 9, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5 },
+  { turn: 12, side: "allies", type: "armor",        name: "4th Armored (CCA)",      col: 0,  row: 9 }
 ]

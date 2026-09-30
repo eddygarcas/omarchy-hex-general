@@ -4,6 +4,44 @@
 .import "Units.js" as Units
 .import "Scenario.js" as Scenario
 
+// ------------------------------------------------------------- weather
+var WEATHER = {
+  clear:    { label: "Clear skies",  air: true,  movePenalty: 0 },
+  overcast: { label: "Overcast fog", air: false, movePenalty: 0 },
+  snow:     { label: "Snowstorm",    air: false, movePenalty: 1 }
+}
+
+// Historical shape: fog for the first days, a mix of fog and snow through
+// the first week, then the skies open. Index = turn number.
+function rollWeather() {
+  var out = [null]
+  for (var turn = 1; turn <= Scenario.TURN_LIMIT + 1; turn++) {
+    var roll = Math.random()
+    if (turn <= 2) out.push("overcast")
+    else if (turn <= 7) out.push(roll < 0.65 ? "overcast" : "snow")
+    else out.push(roll < 0.6 ? "clear" : (roll < 0.85 ? "overcast" : "snow"))
+  }
+  return out
+}
+
+function weatherCodeAt(state, turn) {
+  return state.weather[Math.max(1, Math.min(turn, state.weather.length - 1))]
+}
+
+function weatherAt(state, turn) {
+  return WEATHER[weatherCodeAt(state, turn)]
+}
+
+function currentWeather(state) {
+  return weatherAt(state, state.turn)
+}
+
+function airAvailable(state) {
+  return currentWeather(state).air
+}
+
+var AXIS_SORTIES = 1, ALLIED_SORTIES = 2
+
 function buildRoads() {
   var roads = {}
   Scenario.ROADS.forEach(function (chain) {
@@ -13,8 +51,11 @@ function buildRoads() {
 }
 
 function createState() {
+  var weather = rollWeather()
   return {
     turn: 1,
+    weather: weather,
+    airStrikes: WEATHER[weather[1]].air ? AXIS_SORTIES : 0,   // Axis sorties left this turn
     units: Scenario.buildUnits(),
     terrain: Scenario.buildTerrain(),
     roads: buildRoads(),
@@ -25,7 +66,7 @@ function createState() {
     ai: null,               // per-phase AI bookkeeping, see beginAlliesPhase
     moves: [],              // every move made, for the campaign-map arrows
     arrived: {},            // reinforcement index -> true once placed
-    log: ["Turn 1 -- Axis phase. Move your Kampfgruppen west across the river."],
+    log: ["Turn 1 -- Axis phase. Fog grounds all aircraft. Move your Kampfgruppen west across the river."],
     selectedUnitId: null,
     gameOver: false,
     resultText: ""
@@ -104,9 +145,10 @@ function inEnemyZoc(state, side, q, r) {
 // Dijkstra over terrain cost. Enemy-occupied hexes block; friendly-occupied
 // hexes can be crossed but not stopped on; entering an enemy zone of
 // control ends the move there (a unit that starts in ZOC may still leave).
-// After an overrun (see resolveCombat) a unit may still move, at half pace.
-function moveAllowanceOf(unit) {
-  var move = Units.typeOf(unit).move
+// Snow slows everyone; after an overrun (see resolveCombat) a unit may
+// still move, at half pace.
+function moveAllowanceOf(state, unit) {
+  var move = Math.max(1, Units.typeOf(unit).move - currentWeather(state).movePenalty)
   return unit.overrun ? Math.floor(move / 2) : move
 }
 
@@ -117,7 +159,7 @@ function canMove(unit) {
 
 function reachable(state, unit) {
   if (!canMove(unit)) return {}
-  var moveAllowance = moveAllowanceOf(unit)
+  var moveAllowance = moveAllowanceOf(state, unit)
   var startKey = Hex.key(unit.q, unit.r)
   var costs = {}
   costs[startKey] = 0
@@ -265,7 +307,7 @@ function resolveCombat(state, attackerId, defenderId) {
   // Overrun: a unit that had not moved yet and destroys an adjacent enemy
   // keeps half its movement to exploit the gap.
   var overrun = !attacker.moved && defender.strength <= 0 && attacker.strength > 0 &&
-                Hex.distance(attacker, defender) === 1 && moveAllowanceOf(attacker) > 0
+                Hex.distance(attacker, defender) === 1 && moveAllowanceOf(state, attacker) > 0
   if (overrun) attacker.overrun = true
   else attacker.moved = true
 
@@ -373,6 +415,40 @@ function attackEvent(state, attacker, defender) {
            destroyed: defender.strength <= 0, indirect: Units.typeOf(attacker).range > 1 }
 }
 
+// Air strike: 1-2 steps in the open, only 1 in forest, towns or when dug
+// in. No return fire, any range.
+function airStrike(state, side, targetId) {
+  var target = unitById(state, targetId)
+  if (!target || target.strength <= 0 || target.side === side || !airAvailable(state)) return null
+  var terrain = terrainAt(state, target.q, target.r)
+  var loss = 1 + Math.floor(Math.random() * 2)
+  if (terrain.defBonus > 0 || target.entrenchment >= 2) loss = 1
+  target.strength = Math.max(0, target.strength - loss)
+  var who = side === "axis" ? "Luftwaffe" : "Allied fighter-bombers"
+  state.log.unshift(who + " strike " + target.name + " -- " + (target.strength <= 0 ? target.name + " destroyed!" : "-" + loss))
+  return { kind: "air", side: side, targetId: target.id, to: { q: target.q, r: target.r }, destroyed: target.strength <= 0 }
+}
+
+function axisAirStrike(state, targetId) {
+  if (state.airStrikes <= 0) return null
+  var ev = airStrike(state, "axis", targetId)
+  if (ev) state.airStrikes--
+  return ev
+}
+
+// The AI bombs the strongest enemy unit standing in the open, preferring
+// ones near its own troops.
+function aiPickAirTarget(state, side) {
+  var best = null, bestScore = -1
+  livingUnits(state, enemyOf(side)).forEach(function (u) {
+    var terrain = terrainAt(state, u.q, u.r)
+    var near = nearestEnemy(state, u, 3) ? 1.3 : 1
+    var score = u.strength * (terrain.defBonus > 0 ? 0.5 : 1) * near
+    if (score > bestScore) { bestScore = score; best = u }
+  })
+  return best
+}
+
 function moveEvent(state, unit, q, r) {
   var from = { q: unit.q, r: unit.r }
   moveUnit(state, unit.id, q, r)
@@ -432,14 +508,21 @@ function beginAlliesPhase(state) {
   state.phase = "allies"
   state.log.unshift("-- Allied phase --")
   placeReinforcements(state, "allies")
-  state.ai = { pending: livingUnits(state, "allies").map(function (u) { return u.id }), claims: {} }
+  state.ai = { pending: livingUnits(state, "allies").map(function (u) { return u.id }), claims: {},
+               sorties: airAvailable(state) ? ALLIED_SORTIES : 0 }
 }
 
-// Returns the events (moves/attacks) of the next unit that does something,
-// or null when every unit has acted.
+// Returns the events (air strikes, moves, attacks) of the next thing that
+// happens, or null when the phase is over.
 function aiStep(state) {
   var ai = state.ai
   if (!ai) return null
+  while (ai.sorties > 0) {
+    ai.sorties--
+    var bomb = aiPickAirTarget(state, "allies")
+    if (!bomb) break
+    return [airStrike(state, "allies", bomb.id)]
+  }
   while (ai.pending.length > 0) {
     var unit = unitById(state, ai.pending.shift())
     if (!unit || unit.strength <= 0) continue
@@ -463,7 +546,10 @@ function finishAlliesPhase(state) {
   state.turn += 1
   state.selectedUnitId = null
   if (checkVictory(state)) return
-  state.log.unshift("Turn " + state.turn + " -- Axis phase.")
+  var weather = currentWeather(state)
+  state.airStrikes = weather.air ? AXIS_SORTIES : 0
+  state.log.unshift("Turn " + state.turn + " -- Axis phase. " + weather.label +
+                    (weather.air ? ": air support available." : (weather.movePenalty ? ": movement -" + weather.movePenalty + ", no air." : ": no air.")))
   placeReinforcements(state, "axis")
 }
 
