@@ -213,7 +213,8 @@ Item {
     var unit = Engine.unitAt(gameState, hoverHex.q, hoverHex.r)
     if (unit) {
       var t = Units.typeOf(unit)
-      line += "\n" + unit.name + " -- " + t.label + " " + unit.strength + "/10" +
+      line += "\n" + unit.name + " -- " + t.label + " " + unit.strength + "/10, " + Engine.xpLabel(unit).toLowerCase() +
+              (Engine.xpBars(unit) ? " (" + Engine.xpBars(unit) + " bars)" : "") +
               (unit.entrenchment ? ", dug in " + unit.entrenchment : "") +
               (Engine.isSupplied(gameState, unit) ? "" : " -- CUT OFF from supply, no replacements")
       var sel = selectedUnit()
@@ -675,6 +676,16 @@ Item {
                       ctx.fillRect(bx + bw + s * 0.05, by + bh - (e + 1) * bh * 0.3, s * 0.1, bh * 0.22)
                     }
 
+                    // Experience bars under the strength box.
+                    var bars = Engine.xpBars(unit)
+                    for (var x = 0; x < bars; x++) {
+                      ctx.fillStyle = "#f4f4ee"
+                      ctx.fillRect(bx + x * s * 0.1, by + bh + 2, s * 0.07, s * 0.1)
+                      ctx.strokeStyle = "#222"
+                      ctx.lineWidth = 1
+                      ctx.strokeRect(bx + x * s * 0.1, by + bh + 2, s * 0.07, s * 0.1)
+                    }
+
                     if (cutOff) {
                       var mx = cx + s * 0.55, my = cy - s * 0.5
                       ctx.fillStyle = "#d8231b"
@@ -1049,6 +1060,7 @@ Item {
                     var t = Units.typeOf(u)
                     return t.label + " -- strength " + u.strength + "/10 -- move " + Engine.moveAllowanceOf(gameState, u) +
                            (t.range > 1 ? " -- range " + t.range : "") +
+                           "\n" + Engine.xpLabel(u) + " (" + Engine.xpBars(u) + "/5 bars, +" + (Engine.xpBars(u) * 10) + "% attack and defence)" +
                            (u.entrenchment ? " -- dug in " + u.entrenchment : "") +
                            (u.overrun && !u.moved ? "\nOverrun! May still advance " + Engine.moveAllowanceOf(gameState, u) + " MP."
                             : (u.attacked ? "\nHas fired this turn." : (u.moved ? "\nHas moved; may still attack." : "")))

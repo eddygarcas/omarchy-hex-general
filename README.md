@@ -80,6 +80,12 @@ an explosion -- before play returns to you.
   sortie: press **A** (or the button), then click any enemy. A strike
   costs 1-2 steps in the open, only 1 in forest, towns or against dug-in
   troops, and takes no return fire.
+- **Experience**: every battle a unit survives earns experience -- one
+  point for fighting, two for a kill -- shown as up to five bars under the
+  strength box. Each bar is +10% attack and defence, so a five-bar elite
+  fights half again as hard as a green unit. Units start with historical
+  seasoning: Peiper's SS and the 101st Airborne are veterans, the
+  Volksgrenadiers and the 106th are green.
 - **Replacements**: a damaged unit that spends a whole turn without moving
   or firing regains one step of strength at the end of it -- as long as it
   can trace a supply line to its own map edge through hexes free of enemy

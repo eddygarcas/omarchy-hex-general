@@ -91,11 +91,12 @@ var OBJECTIVES = [
   return { q: a.q, r: a.r, name: o.name, points: o.points }
 })
 
-function makeUnit(id, side, type, name, col, row, strength) {
+// xp: starting experience points (3 per bar, 5 bars max -- see Engine).
+function makeUnit(id, side, type, name, col, row, strength, xp) {
   var a = Hex.offsetToAxial(col, row)
   return {
     id: id, side: side, type: type, name: name,
-    q: a.q, r: a.r, strength: strength || 10, entrenchment: 0,
+    q: a.q, r: a.r, strength: strength || 10, entrenchment: 0, xp: xp || 0,
     moved: false, attacked: false, overrun: false
   }
 }
@@ -103,31 +104,32 @@ function makeUnit(id, side, type, name, col, row, strength) {
 function buildUnits() {
   var units = []
   var n = 0
-  function add(side, type, name, col, row, strength) { n++; units.push(makeUnit("u" + n, side, type, name, col, row, strength)) }
+  function add(side, type, name, col, row, strength, xp) { n++; units.push(makeUnit("u" + n, side, type, name, col, row, strength, xp)) }
 
-  // Axis (player): Kampfgruppen pushing in from the east edge.
-  add("axis", "armor", "Kampfgruppe Peiper", 15, 1)
-  add("axis", "armor", "1. SS-Panzer-Division", 14, 1)
-  add("axis", "armor", "2. Panzer-Division", 15, 3)
-  add("axis", "armor", "116. Panzer-Division", 15, 4)
-  add("axis", "eliteInfantry", "3. Fallschirmjäger", 15, 5)
-  add("axis", "mechInfantry", "Panzergrenadier-Lehr", 15, 6)
-  add("axis", "infantry", "18. Volksgrenadier", 14, 2)
-  add("axis", "infantry", "26. Volksgrenadier", 14, 7)
-  add("axis", "artillery", "Nebelwerfer-Brigade", 14, 8)
-  add("axis", "recon", "Aufklärungs-Abteilung", 15, 8)
+  // Axis (player): Kampfgruppen pushing in from the east edge. The SS and
+  // Lehr formations are Eastern Front veterans; the Volksgrenadiers are raw.
+  add("axis", "armor", "Kampfgruppe Peiper", 15, 1, 10, 12)
+  add("axis", "armor", "1. SS-Panzer-Division", 14, 1, 10, 9)
+  add("axis", "armor", "2. Panzer-Division", 15, 3, 10, 9)
+  add("axis", "armor", "116. Panzer-Division", 15, 4, 10, 6)
+  add("axis", "eliteInfantry", "3. Fallschirmjäger", 15, 5, 10, 6)
+  add("axis", "mechInfantry", "Panzergrenadier-Lehr", 15, 6, 10, 9)
+  add("axis", "infantry", "18. Volksgrenadier", 14, 2, 10, 0)
+  add("axis", "infantry", "26. Volksgrenadier", 14, 7, 10, 0)
+  add("axis", "artillery", "Nebelwerfer-Brigade", 14, 8, 10, 3)
+  add("axis", "recon", "Aufklärungs-Abteilung", 15, 8, 10, 3)
 
   // Allies (AI): green, understrength garrisons in the towns (the 106th
   // and 28th were overstretched and newly arrived), a thin screen on the
   // river line, veterans in the rear.
-  add("allies", "armor", "7th Armored (CCB)", 4, 1, 8)
-  add("allies", "infantry", "106th Infantry Div.", 5, 1, 7)      // St. Vith
-  add("allies", "infantry", "28th Infantry Div.", 8, 4, 7)       // Clervaux
-  add("allies", "antiTank", "823rd TD Battalion", 7, 5, 8)
-  add("allies", "infantry", "4th Infantry Div.", 8, 8, 7)
-  add("allies", "eliteInfantry", "101st Airborne", 4, 8)         // Bastogne
-  add("allies", "armor", "10th Armored (CCB)", 5, 7, 8)
-  add("allies", "artillery", "VIII Corps Artillery", 3, 5, 8)    // Houffalize
+  add("allies", "armor", "7th Armored (CCB)", 4, 1, 8, 3)
+  add("allies", "infantry", "106th Infantry Div.", 5, 1, 7, 0)      // St. Vith
+  add("allies", "infantry", "28th Infantry Div.", 8, 4, 7, 6)       // Clervaux
+  add("allies", "antiTank", "823rd TD Battalion", 7, 5, 8, 6)
+  add("allies", "infantry", "4th Infantry Div.", 8, 8, 7, 9)
+  add("allies", "eliteInfantry", "101st Airborne", 4, 8, 10, 12)    // Bastogne
+  add("allies", "armor", "10th Armored (CCB)", 5, 7, 8, 6)
+  add("allies", "artillery", "VIII Corps Artillery", 3, 5, 8, 6)    // Houffalize
 
   return units
 }
@@ -135,8 +137,8 @@ function buildUnits() {
 // Arrivals, placed at the start of that side's phase on the given turn
 // (or the nearest free hex if the entry hex is occupied).
 var REINFORCEMENTS = [
-  { turn: 3, side: "axis",   type: "armor",         name: "Führer-Begleit-Brigade", col: 15, row: 4 },
-  { turn: 6, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2 },
-  { turn: 9, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5 },
-  { turn: 12, side: "allies", type: "armor",        name: "4th Armored (CCA)",      col: 0,  row: 9 }
+  { turn: 3, side: "axis",   type: "armor",         name: "Führer-Begleit-Brigade", col: 15, row: 4, xp: 9 },
+  { turn: 6, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2, xp: 12 },
+  { turn: 9, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5, xp: 9 },
+  { turn: 12, side: "allies", type: "armor",        name: "4th Armored (CCA)",      col: 0,  row: 9, xp: 12 }
 ]

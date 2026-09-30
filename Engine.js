@@ -268,12 +268,35 @@ function canAttack(state, unit, target) {
   return attackTargets(state, unit).some(function (t) { return t.id === target.id })
 }
 
+// ---------------------------------------------------------- experience
+// Three points per bar, five bars max; each bar is +10% attack and defence.
+var XP_PER_BAR = 3, MAX_BARS = 5
+var XP_LABELS = ["Green", "Seasoned", "Seasoned", "Veteran", "Veteran", "Elite"]
+
+function xpBars(unit) {
+  return Math.min(MAX_BARS, Math.floor((unit.xp || 0) / XP_PER_BAR))
+}
+
+function xpLabel(unit) {
+  return XP_LABELS[xpBars(unit)]
+}
+
+function xpBonus(unit) {
+  return 1 + xpBars(unit) * 0.1
+}
+
+function gainXp(state, unit, amount) {
+  var before = xpBars(unit)
+  unit.xp = Math.min(MAX_BARS * XP_PER_BAR, (unit.xp || 0) + amount)
+  if (xpBars(unit) > before) state.log.unshift(unit.name + " is now " + xpLabel(unit).toLowerCase() + " (" + xpBars(unit) + " bars).")
+}
+
 function combatOdds(state, attacker, defender) {
   var atkType = Units.typeOf(attacker)
   var defType = Units.typeOf(defender)
-  var atkValue = (Units.isHardTarget(defender) ? atkType.atkHard : atkType.atkSoft) * (attacker.strength / 10)
+  var atkValue = (Units.isHardTarget(defender) ? atkType.atkHard : atkType.atkSoft) * (attacker.strength / 10) * xpBonus(attacker)
   var terrain = terrainAt(state, defender.q, defender.r)
-  var defValue = defType.def * (defender.strength / 10) * (1 + terrain.defBonus * 0.25) * (1 + defender.entrenchment * 0.15)
+  var defValue = defType.def * (defender.strength / 10) * (1 + terrain.defBonus * 0.25) * (1 + defender.entrenchment * 0.15) * xpBonus(defender)
   return atkValue / Math.max(0.1, defValue)
 }
 
@@ -316,6 +339,10 @@ function resolveCombat(state, attackerId, defenderId) {
   else if (attacker.strength <= 0) line += attacker.name + " destroyed!"
   else line += defender.name + " -" + defenderLoss + ", " + attacker.name + " -" + attackerLoss
   state.log.unshift(line)
+
+  // Both sides learn from a fight they survive; a kill teaches the most.
+  if (attacker.strength > 0) gainXp(state, attacker, defender.strength <= 0 ? 2 : 1)
+  if (defender.strength > 0) gainXp(state, defender, 1)
   return line
 }
 
@@ -358,7 +385,7 @@ function placeReinforcements(state, side) {
     }
     if (!spot) return
     var o = Hex.axialToOffset(spot.q, spot.r)
-    var unit = Scenario.makeUnit("rf" + index, rf.side, rf.type, rf.name, o.col, o.row)
+    var unit = Scenario.makeUnit("rf" + index, rf.side, rf.type, rf.name, o.col, o.row, 10, rf.xp)
     state.units.push(unit)
     claimObjective(state, unit)
     state.arrived[index] = true
