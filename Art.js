@@ -626,5 +626,15 @@ function airRaid(ctx, ev, b, t, s, w) {
     ctx.beginPath(); ctx.arc(bx, by, Math.max(2, s * 0.08), 0, Math.PI * 2); ctx.fill()
   }
   if (t >= arrive) explosion(ctx, b, Math.min(1, (t - arrive) / (1 - arrive)), s, ev.destroyed)
+  var ext = Sprites.external[ev.side]
+  if (ext && ext.sprites.plane) {
+    // Personal plane sprite (faces right); mirror it for the Axis, flying west.
+    ctx.save()
+    ctx.translate(px, py)
+    if (!fromWest) ctx.scale(-1, 1)
+    Sprites.draw(ctx, "plane", ev.side, 0, 0, Math.max(1, Math.round(s * 1.35 / Sprites.WIDTH)))
+    ctx.restore()
+    return
+  }
   plane(ctx, px, py, fromWest ? 0 : Math.PI, s * 0.6, ev.side)
 }

@@ -144,8 +144,9 @@ ones in `Sprites.js` (`tigerII`, `panther`, `pzIV`, `sdkfz251`, `puma`,
 `pak40`, `lefh18`, `nebelwerfer`, `opelBlitz`, `infantryAxis`,
 `fallschirmjaeger`, `sherman`, `sherman76`, `firefly`, `hellcat`,
 `m3halftrack`, `greyhound`, `m2a1`, `longTom`, `gmcTruck`,
-`infantryAllied`, `paratrooper`). Anything not listed keeps the built-in
-sprite. Sheets are drawn at the same integer pixel scale as the built-ins,
+`infantryAllied`, `paratrooper`), plus `plane` for that side's air-strike
+aircraft (drawn facing right; the Axis one is mirrored). Anything not
+listed keeps the built-in sprite. Sheets are drawn at the same integer pixel scale as the built-ins,
 so cells of roughly 32-48 pixels wide look right. Nothing in that folder
 is part of the game or its repository -- it is your personal art.
 
