@@ -122,7 +122,34 @@ Item {
   }
   onRevChanged: saveTimer.restart()
 
-  Component.onCompleted: loadGame()
+  // ---- optional external sprite sheets --------------------------------
+  readonly property string spriteDir: Quickshell.env("HOME") + "/.local/share/hex-general/sprites"
+  property var spriteSheets: ({})   // side -> { url, sprites }
+
+  FileView {
+    id: spriteConfig
+    path: root.spriteDir + "/sprites.json"
+    blockLoading: true
+    printErrors: false
+  }
+
+  function loadSpriteSheets() {
+    var text = ""
+    try { text = spriteConfig.text() } catch (e) { return }
+    if (!text) return
+    try {
+      var cfg = JSON.parse(text)
+      var sheets = {}
+      ;["axis", "allies"].forEach(function (side) {
+        if (!cfg[side] || !cfg[side].file || !cfg[side].sprites) return
+        sheets[side] = { url: "file://" + root.spriteDir + "/" + cfg[side].file, sprites: cfg[side].sprites }
+        unitCanvas.loadImage(sheets[side].url)
+      })
+      spriteSheets = sheets
+    } catch (e) { console.warn("sprites.json:", e) }
+  }
+
+  Component.onCompleted: { loadGame(); loadSpriteSheets() }
 
   // ---- game actions ---------------------------------------------------
   function newGame() {
@@ -543,6 +570,15 @@ Item {
                 onPaintAnimChanged: requestPaint()
                 onPaintAirChanged: requestPaint()
                 onWidthChanged: requestPaint()
+
+                // External sheets become usable once their image is in this canvas.
+                onImageLoaded: {
+                  for (var side in root.spriteSheets) {
+                    var sheet = root.spriteSheets[side]
+                    if (isImageLoaded(sheet.url)) Sprites.setExternal(side, sheet.url, sheet.sprites)
+                  }
+                  requestPaint()
+                }
 
                 onPaint: {
                   var ctx = getContext("2d")

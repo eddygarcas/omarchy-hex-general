@@ -401,8 +401,28 @@ function labelFor(unit) {
   return LABELS[spriteFor(unit)] || ""
 }
 
+// Optional external sprite sheets (personal art, never shipped with the
+// game): ~/.local/share/hex-general/sprites/sprites.json maps sprite
+// names to [x, y, w, h] cells of a PNG per side. Set from Game.qml once
+// the images are loaded; anything unmapped falls back to the built-ins.
+var external = { axis: null, allies: null }   // { url, sprites: {name: [x,y,w,h]} }
+
+function setExternal(side, url, sprites) {
+  external[side] = { url: url, sprites: sprites }
+}
+
 // Draw a sprite centred on (cx, cy) at an integer pixel scale.
 function draw(ctx, name, side, cx, cy, scale) {
+  var ext = external[side]
+  if (ext && ext.sprites[name]) {
+    var c = ext.sprites[name]
+    var dw = c[2] * scale, dh = c[3] * scale
+    var smooth = ctx.imageSmoothingEnabled
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(ext.url, c[0], c[1], c[2], c[3], Math.round(cx - dw / 2), Math.round(cy - dh / 2), dw, dh)
+    ctx.imageSmoothingEnabled = smooth
+    return
+  }
   var runs = runsOf(name)
   var pal = PALETTES[side] || PALETTES.axis
   var x0 = Math.round(cx - WIDTH * scale / 2), y0 = Math.round(cy - HEIGHT * scale / 2)

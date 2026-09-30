@@ -125,6 +125,30 @@ Victory is judged at the end of each turn on the objective points you hold
 Clervaux, Stavelot, La Roche, Rochefort 1 each, and the Meuse bridges at
 Namur and Dinant 5 each): 75% is a major victory, 40% a minor one.
 
+### Your own sprite sheets
+
+You can replace any built-in sprite with pixel art of your own. Put a PNG
+with a transparent background per side in
+`~/.local/share/hex-general/sprites/` and describe the cells in
+`sprites.json` next to it:
+
+```json
+{
+  "axis":   { "file": "axis.png",   "sprites": { "tigerII": [0, 0, 46, 21], "panther": [48, 0, 46, 22] } },
+  "allies": { "file": "allies.png", "sprites": { "sherman": [0, 0, 44, 20] } }
+}
+```
+
+Each entry is `[x, y, width, height]` in the sheet. Sprite names are the
+ones in `Sprites.js` (`tigerII`, `panther`, `pzIV`, `sdkfz251`, `puma`,
+`pak40`, `lefh18`, `nebelwerfer`, `opelBlitz`, `infantryAxis`,
+`fallschirmjaeger`, `sherman`, `sherman76`, `firefly`, `hellcat`,
+`m3halftrack`, `greyhound`, `m2a1`, `longTom`, `gmcTruck`,
+`infantryAllied`, `paratrooper`). Anything not listed keeps the built-in
+sprite. Sheets are drawn at the same integer pixel scale as the built-ins,
+so cells of roughly 32-48 pixels wide look right. Nothing in that folder
+is part of the game or its repository -- it is your personal art.
+
 ## The order of battle
 
 The units are the historical regiments, Kampfgruppen and combat commands
