@@ -56,9 +56,12 @@ the Allied side takes its turn and play returns to you.
   it can attack get a red ring. **Tab** cycles through units that can still
   act.
 - **Click a highlighted hex** to move there. Terrain costs movement points
-  (snowfield 1, forest/hills 2, rivers are impassable except at bridges),
-  and entering an enemy **zone of control** (any hex next to an enemy)
-  ends the move.
+  (snowfield 1, forest/hills 2, roads always 1, rivers are impassable
+  except at bridges), and entering an enemy **zone of control** (any hex
+  next to an enemy) ends the move.
+- **Objective towns** (yellow ring) fly the flag of whoever moved in last.
+  Capturing one keeps it until the enemy takes it back; you do not have to
+  garrison it.
 - **Click a red-ringed enemy** to attack. Hover it first: the sidebar shows
   the odds. Odds depend on attacker type vs. hard/soft target, both units'
   strength, the defender's terrain and how long it has been dug in. Units

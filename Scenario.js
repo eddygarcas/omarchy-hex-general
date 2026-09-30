@@ -38,7 +38,9 @@ function buildTerrain() {
 
   // The Our/Clerf river line, north-south with a westward jog in the
   // middle -- the chokepoint the Axis player must cross.
-  var riverCols = [10, 10, 10, 9, 9, 9, 9, 10, 10, 10]
+  // Consecutive rows must stay hex-adjacent (odd rows sit half a hex to the
+  // right), otherwise the line leaks.
+  var riverCols = [10, 10, 10, 9, 9, 9, 9, 9, 10, 10]
   for (var r = 0; r < HEIGHT; r++) set(riverCols[r], r, "river")
   // Bridges: the only crossing points.
   set(10, 1, "bridge")
@@ -67,6 +69,17 @@ function buildTerrain() {
 
   return grid
 }
+
+// Roads as chains of adjacent offset hexes. Entering a road hex costs 1
+// movement point whatever the terrain; bridges carry the road over the river.
+var ROADS = [
+  [[15, 1], [14, 1], [13, 1], [12, 1], [11, 1], [10, 1], [9, 1], [8, 1], [7, 1], [6, 1], [5, 1], [4, 1], [3, 1], [2, 1], [1, 1], [0, 1]],
+  [[15, 4], [14, 4], [13, 4], [12, 4], [11, 4], [10, 4], [9, 4], [8, 4], [7, 4], [6, 4], [5, 4], [4, 4], [3, 5], [2, 5], [1, 5], [0, 5]],
+  [[15, 8], [14, 8], [13, 8], [12, 8], [11, 8], [10, 8], [9, 8], [8, 8], [7, 7], [6, 7], [5, 7], [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8]],
+  [[5, 1], [5, 2], [5, 3], [5, 4]],
+  [[3, 5], [3, 6], [3, 7], [4, 8]],
+  [[8, 4], [8, 5], [8, 6], [7, 7]]
+]
 
 var OBJECTIVES = [
   { col: 5, row: 1, name: "St. Vith", points: 3 },

@@ -4,12 +4,23 @@
 .import "Units.js" as Units
 .import "Scenario.js" as Scenario
 
+function buildRoads() {
+  var roads = {}
+  Scenario.ROADS.forEach(function (chain) {
+    chain.forEach(function (h) { var a = Hex.offsetToAxial(h[0], h[1]); roads[Hex.key(a.q, a.r)] = true })
+  })
+  return roads
+}
+
 function createState() {
   return {
     turn: 1,
     units: Scenario.buildUnits(),
     terrain: Scenario.buildTerrain(),
-    objectives: Scenario.OBJECTIVES,
+    roads: buildRoads(),
+    objectives: Scenario.OBJECTIVES.map(function (o) {
+      return { q: o.q, r: o.r, name: o.name, points: o.points, owner: "allies" }
+    }),
     arrived: {},            // reinforcement index -> true once placed
     log: ["Turn 1 -- Axis phase. Move your Kampfgruppen west across the river."],
     selectedUnitId: null,
@@ -32,6 +43,19 @@ function terrainCodeAt(state, q, r) {
 function terrainAt(state, q, r) {
   var code = terrainCodeAt(state, q, r)
   return code ? Scenario.TERRAIN[code] : null
+}
+
+function moveCost(state, q, r) {
+  var terrain = terrainAt(state, q, r)
+  if (!terrain || !terrain.passable) return Infinity
+  return state.roads[Hex.key(q, r)] ? 1 : terrain.cost
+}
+
+// Moving onto an objective town captures it; it stays yours until the
+// enemy moves in.
+function claimObjective(state, unit) {
+  var obj = objectiveAt(state, unit.q, unit.r)
+  if (obj) obj.owner = unit.side
 }
 
 function unitAt(state, q, r) {
@@ -93,11 +117,11 @@ function reachable(state, unit) {
     var ns = Hex.neighbors(current.q, current.r)
     for (var i = 0; i < ns.length; i++) {
       var n = ns[i]
-      var terrain = terrainAt(state, n.q, n.r)
-      if (!terrain || !terrain.passable) continue
+      var stepCost = moveCost(state, n.q, n.r)
+      if (stepCost === Infinity) continue
       var occupant = unitAt(state, n.q, n.r)
       if (occupant && occupant.side !== unit.side) continue
-      var newCost = current.cost + terrain.cost
+      var newCost = current.cost + stepCost
       if (newCost > moveAllowance) continue
       var nk = Hex.key(n.q, n.r)
       if (costs[nk] === undefined || newCost < costs[nk]) {
@@ -126,6 +150,7 @@ function moveUnit(state, unitId, q, r) {
   unit.r = r
   unit.moved = true
   unit.entrenchment = 0
+  claimObjective(state, unit)
   return true
 }
 
@@ -187,8 +212,7 @@ function resolveCombat(state, attackerId, defenderId) {
 }
 
 function objectiveHolder(state, obj) {
-  var u = unitAt(state, obj.q, obj.r)
-  return u ? u.side : null
+  return obj.owner
 }
 
 function scoreFor(state, side) {
@@ -225,6 +249,7 @@ function placeReinforcements(state, side) {
     var o = Hex.axialToOffset(spot.q, spot.r)
     var unit = Scenario.makeUnit("rf" + index, rf.side, rf.type, rf.name, o.col, o.row)
     state.units.push(unit)
+    claimObjective(state, unit)
     state.arrived[index] = true
     state.log.unshift((side === "axis" ? "Reinforcement: " : "Allied reinforcement: ") + rf.name + " arrives.")
   })
@@ -279,11 +304,7 @@ function aiSortie(state, unit) {
   for (var k in options) {
     var h = Hex.parseKey(k)
     if (Hex.distance(h, enemy) !== 1) continue
-    // Evaluate as if standing there: odds against that enemy, prefer cover.
-    var saved = { q: unit.q, r: unit.r }
-    unit.q = h.q; unit.r = h.r
     var odds = combatOdds(state, unit, enemy)
-    unit.q = saved.q; unit.r = saved.r
     var score = odds + terrainAt(state, h.q, h.r).defBonus * 0.1
     if (odds >= 1.0 && score > bestScore) { bestScore = score; best = h }
   }

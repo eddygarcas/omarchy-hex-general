@@ -6,6 +6,11 @@
 // place by Engine.js's functions; `rev` is bumped after every mutation so
 // the property bindings below (which read `rev` purely as a dependency)
 // re-evaluate even though QML can't see inside a mutated plain object.
+//
+// The map is drawn on a Canvas in the style of 1990s hex wargames: textured
+// terrain tiles, connected rivers and roads, unit silhouettes with a
+// strength box, and owner flags on the objective towns. Everything is
+// procedural -- no image assets.
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
@@ -104,8 +109,11 @@ Item {
     var terrain = Engine.terrainAt(gameState, hoverHex.q, hoverHex.r)
     if (!terrain) return ""
     var obj = Engine.objectiveAt(gameState, hoverHex.q, hoverHex.r)
-    var line = (obj ? obj.name + " (" + obj.points + " pts) -- " : "") + terrain.label +
-               " -- move cost " + terrain.cost + (terrain.defBonus ? ", defence +" + terrain.defBonus : "")
+    var road = gameState.roads[Hex.key(hoverHex.q, hoverHex.r)]
+    var line = (obj ? obj.name + " (" + obj.points + " pts, " + (obj.owner === "axis" ? "Axis" : "Allied") + ") -- " : "") +
+               terrain.label + (road ? " + road" : "") +
+               " -- move cost " + Engine.moveCost(gameState, hoverHex.q, hoverHex.r) +
+               (terrain.defBonus ? ", defence +" + terrain.defBonus : "")
     var unit = Engine.unitAt(gameState, hoverHex.q, hoverHex.r)
     if (unit) {
       var t = Units.typeOf(unit)
@@ -118,22 +126,6 @@ Item {
       }
     }
     return line
-  }
-
-  function terrainColor(code) {
-    switch (code) {
-      case "forest": return "#2f4d34"
-      case "hills": return "#6b5b42"
-      case "town": return "#8a7a63"
-      case "city": return "#b08d4f"
-      case "river": return "#2a4a6b"
-      case "bridge": return "#8a6b3c"
-      default: return "#dfe6ea" // snowfield
-    }
-  }
-
-  function sideColor(side) {
-    return side === "axis" ? "#5a6b3a" : "#3a5a7a"
   }
 
   PanelWindow {
@@ -229,7 +221,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumWidth: Style.space(200)
-            color: "#1b1f22"
+            color: "#2a2d2b"
             radius: Style.cornerRadius
             clip: true
 
@@ -259,6 +251,26 @@ Item {
                   onPaintHoverChanged: requestPaint()
                   onWidthChanged: requestPaint()
 
+                  // ---- palette ---------------------------------------------
+                  readonly property var pal: ({
+                    snow: "#e3e5dd", snowMottle: "rgba(165,172,160,0.28)",
+                    tree: "#2d5a36", treeLight: "#4a7d4e", treeShadow: "rgba(0,0,0,0.18)",
+                    hill: "#b8a074", hillLine: "#8a6d45",
+                    wall: "#9a9691", roof: "#a3453b", roofCity: "#7d3a33",
+                    bank: "#c6dced", water: "#4f86b8",
+                    road: "#8d6c48", roadEdge: "rgba(60,40,20,0.35)",
+                    bridge: "#5e4128",
+                    gridLine: "rgba(40,40,40,0.28)",
+                    axisUnit: "#2f2f2f", alliedUnit: "#3f5a2a",
+                    strengthBox: "#f4f4ee", objectiveRing: "#f2cf3a"
+                  })
+
+                  // Deterministic per-hex noise so textures don't shimmer on repaint.
+                  function noise(q, r, i) {
+                    var x = Math.sin(q * 127.1 + r * 311.7 + i * 74.7) * 43758.5453
+                    return x - Math.floor(x)
+                  }
+
                   function centerOf(q, r) {
                     var p = Hex.toPixel(q, r, root.hexSize)
                     return { x: p.x + root.hexSize, y: p.y + root.hexSize }
@@ -272,40 +284,301 @@ Item {
                     ctx.closePath()
                   }
 
-                  function drawCounter(ctx, unit, cx, cy, isSelected, isTarget) {
-                    var s = root.hexSize
-                    var w = s * 1.25, h = s * 1.0
-                    var x = cx - w / 2, y = cy - h / 2
-                    var rad = s * 0.12
+                  function blob(ctx, x, y, rx, ry, fill) {
                     ctx.beginPath()
-                    ctx.moveTo(x + rad, y)
-                    ctx.lineTo(x + w - rad, y); ctx.arcTo(x + w, y, x + w, y + rad, rad)
-                    ctx.lineTo(x + w, y + h - rad); ctx.arcTo(x + w, y + h, x + w - rad, y + h, rad)
-                    ctx.lineTo(x + rad, y + h); ctx.arcTo(x, y + h, x, y + h - rad, rad)
-                    ctx.lineTo(x, y + rad); ctx.arcTo(x, y, x + rad, y, rad)
-                    ctx.closePath()
-                    ctx.fillStyle = root.sideColor(unit.side)
+                    ctx.ellipse(x - rx, y - ry, rx * 2, ry * 2)
+                    ctx.fillStyle = fill
                     ctx.fill()
-                    ctx.lineWidth = isSelected || isTarget ? 3 : 1.5
-                    ctx.strokeStyle = isSelected ? "#ffffff" : (isTarget ? "#ff5040" : "rgba(255,255,255,0.6)")
-                    ctx.stroke()
+                  }
 
-                    ctx.fillStyle = unit.side === "axis" && unit.moved && unit.attacked ? "rgba(255,255,255,0.55)" : "#ffffff"
-                    ctx.textAlign = "center"
-                    ctx.textBaseline = "middle"
-                    ctx.font = "bold " + Math.round(s * 0.36) + "px sans-serif"
-                    ctx.fillText(Units.typeOf(unit).glyph, cx - s * 0.18, cy - s * 0.02)
-                    ctx.font = "bold " + Math.round(s * 0.34) + "px sans-serif"
-                    ctx.textAlign = "right"
-                    ctx.fillText(unit.strength, x + w - s * 0.08, cy + s * 0.22)
+                  // ---- terrain tiles ---------------------------------------
+                  function drawTile(ctx, code, cx, cy, s, q, r) {
+                    hexPath(ctx, cx, cy, s)
+                    ctx.fillStyle = pal.snow
+                    ctx.fill()
+                    ctx.save()
+                    ctx.clip()
 
-                    // Entrenchment pips along the top edge.
-                    for (var e = 0; e < unit.entrenchment; e++) {
-                      ctx.fillStyle = "#e8d060"
-                      ctx.fillRect(x + s * 0.1 + e * s * 0.22, y + s * 0.07, s * 0.16, s * 0.08)
+                    for (var m = 0; m < 5; m++) {
+                      var mx = cx + (noise(q, r, m) - 0.5) * s * 1.5
+                      var my = cy + (noise(q, r, m + 10) - 0.5) * s * 1.5
+                      blob(ctx, mx, my, s * (0.18 + noise(q, r, m + 20) * 0.2), s * 0.12, pal.snowMottle)
+                    }
+
+                    if (code === "forest") {
+                      for (var t = 0; t < 8; t++) {
+                        var tx = cx + (noise(q, r, t + 30) - 0.5) * s * 1.35
+                        var ty = cy + (noise(q, r, t + 40) - 0.5) * s * 1.25
+                        var tr = s * (0.14 + noise(q, r, t + 50) * 0.1)
+                        blob(ctx, tx + tr * 0.25, ty + tr * 0.3, tr, tr * 0.85, pal.treeShadow)
+                        blob(ctx, tx, ty, tr, tr * 0.9, pal.tree)
+                        blob(ctx, tx - tr * 0.25, ty - tr * 0.3, tr * 0.5, tr * 0.4, pal.treeLight)
+                      }
+                    } else if (code === "hills") {
+                      for (var h = 0; h < 3; h++) {
+                        var hx = cx + (h - 1) * s * 0.42 + (noise(q, r, h + 60) - 0.5) * s * 0.2
+                        var hy = cy + (noise(q, r, h + 70) - 0.5) * s * 0.6 + s * 0.1
+                        var hw = s * (0.36 + noise(q, r, h + 80) * 0.14)
+                        ctx.beginPath()
+                        ctx.moveTo(hx - hw, hy)
+                        ctx.quadraticCurveTo(hx, hy - hw * 0.9, hx + hw, hy)
+                        ctx.closePath()
+                        ctx.fillStyle = pal.hill
+                        ctx.fill()
+                        ctx.lineWidth = 1
+                        ctx.strokeStyle = pal.hillLine
+                        ctx.stroke()
+                      }
+                    } else if (code === "town" || code === "city") {
+                      var count = code === "city" ? 7 : 4
+                      var bw = s * 0.26, bh = s * 0.2
+                      for (var b = 0; b < count; b++) {
+                        var ang = (b / count) * Math.PI * 2 + noise(q, r, b + 90) * 0.6
+                        var rad = code === "city" ? s * (b === 0 ? 0 : 0.42) : s * 0.3
+                        var bx = cx + Math.cos(ang) * rad - bw / 2
+                        var by = cy + Math.sin(ang) * rad * 0.8 - bh / 2
+                        ctx.fillStyle = pal.wall
+                        ctx.fillRect(bx, by + bh * 0.35, bw, bh * 0.65)
+                        ctx.fillStyle = code === "city" ? pal.roofCity : pal.roof
+                        ctx.beginPath()
+                        ctx.moveTo(bx - 1, by + bh * 0.4)
+                        ctx.lineTo(bx + bw / 2, by)
+                        ctx.lineTo(bx + bw + 1, by + bh * 0.4)
+                        ctx.closePath()
+                        ctx.fill()
+                      }
+                    }
+                    ctx.restore()
+                  }
+
+                  // ---- linear features: roads and rivers -------------------
+                  function drawRoads(ctx, s) {
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    for (var pass = 0; pass < 2; pass++) {
+                      ctx.strokeStyle = pass === 0 ? pal.roadEdge : pal.road
+                      ctx.lineWidth = pass === 0 ? s * 0.2 : s * 0.11
+                      Scenario.ROADS.forEach(function (chain) {
+                        ctx.beginPath()
+                        for (var i = 0; i < chain.length; i++) {
+                          var a = Hex.offsetToAxial(chain[i][0], chain[i][1])
+                          var c = centerOf(a.q, a.r)
+                          if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y)
+                        }
+                        ctx.stroke()
+                      })
                     }
                   }
 
+                  function isWater(state, q, r) {
+                    var code = Engine.terrainCodeAt(state, q, r)
+                    return code === "river" || code === "bridge"
+                  }
+
+                  function drawRivers(ctx, state, s) {
+                    ctx.lineCap = "round"
+                    for (var pass = 0; pass < 2; pass++) {
+                      ctx.strokeStyle = pass === 0 ? pal.bank : pal.water
+                      ctx.lineWidth = pass === 0 ? s * 0.38 : s * 0.22
+                      for (var row = 0; row < Scenario.HEIGHT; row++) {
+                        for (var col = 0; col < Scenario.WIDTH; col++) {
+                          var a = Hex.offsetToAxial(col, row)
+                          if (!isWater(state, a.q, a.r)) continue
+                          var c = centerOf(a.q, a.r)
+                          var links = 0
+                          var ns = Hex.neighbors(a.q, a.r)
+                          for (var i = 0; i < ns.length; i++) {
+                            if (!isWater(state, ns[i].q, ns[i].r)) continue
+                            links++
+                            var n = centerOf(ns[i].q, ns[i].r)
+                            ctx.beginPath()
+                            ctx.moveTo(c.x, c.y)
+                            ctx.lineTo((c.x + n.x) / 2, (c.y + n.y) / 2)
+                            ctx.stroke()
+                          }
+                          // Run off the map at the top/bottom edge.
+                          if (row === 0 || row === Scenario.HEIGHT - 1) {
+                            ctx.beginPath()
+                            ctx.moveTo(c.x, c.y)
+                            ctx.lineTo(c.x, c.y + (row === 0 ? -s : s))
+                            ctx.stroke()
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  function drawBridge(ctx, cx, cy, s) {
+                    ctx.fillStyle = pal.bridge
+                    ctx.fillRect(cx - s * 0.5, cy - s * 0.09, s * 1.0, s * 0.18)
+                    ctx.fillStyle = pal.road
+                    ctx.fillRect(cx - s * 0.5, cy - s * 0.05, s * 1.0, s * 0.1)
+                  }
+
+                  // ---- objective flags -------------------------------------
+                  function drawFlag(ctx, side, x, y, w, h) {
+                    ctx.fillStyle = "#222"
+                    ctx.fillRect(x - 1, y, 1.5, h + 2)
+                    ctx.fillStyle = side === "axis" ? "#3a3a3a" : "#2b4f8a"
+                    ctx.fillRect(x, y, w, h)
+                    ctx.fillStyle = "#f4f4ee"
+                    if (side === "axis") {
+                      ctx.fillRect(x + w * 0.42, y + h * 0.12, w * 0.16, h * 0.76)
+                      ctx.fillRect(x + w * 0.12, y + h * 0.42, w * 0.76, h * 0.16)
+                    } else {
+                      drawStar(ctx, x + w / 2, y + h / 2, h * 0.36)
+                    }
+                    ctx.strokeStyle = "rgba(0,0,0,0.6)"
+                    ctx.lineWidth = 1
+                    ctx.strokeRect(x, y, w, h)
+                  }
+
+                  function drawStar(ctx, cx, cy, rOuter) {
+                    ctx.beginPath()
+                    for (var i = 0; i < 10; i++) {
+                      var rad = i % 2 === 0 ? rOuter : rOuter * 0.45
+                      var ang = -Math.PI / 2 + i * Math.PI / 5
+                      var px = cx + Math.cos(ang) * rad, py = cy + Math.sin(ang) * rad
+                      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py)
+                    }
+                    ctx.closePath()
+                    ctx.fill()
+                  }
+
+                  // ---- unit silhouettes ------------------------------------
+                  function figure(ctx, x, y, u) {
+                    ctx.beginPath(); ctx.arc(x, y - u * 0.55, u * 0.13, 0, Math.PI * 2); ctx.fill()
+                    ctx.beginPath()
+                    ctx.moveTo(x - u * 0.16, y + u * 0.15)
+                    ctx.lineTo(x - u * 0.1, y - u * 0.4)
+                    ctx.lineTo(x + u * 0.1, y - u * 0.4)
+                    ctx.lineTo(x + u * 0.16, y + u * 0.15)
+                    ctx.closePath(); ctx.fill()
+                    ctx.fillRect(x - u * 0.15, y + u * 0.1, u * 0.1, u * 0.3)
+                    ctx.fillRect(x + u * 0.05, y + u * 0.1, u * 0.1, u * 0.3)
+                    ctx.lineWidth = Math.max(1, u * 0.06)
+                    ctx.beginPath(); ctx.moveTo(x - u * 0.3, y + u * 0.05); ctx.lineTo(x + u * 0.3, y - u * 0.45); ctx.stroke()
+                  }
+
+                  function wheel(ctx, x, y, r) {
+                    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+                  }
+
+                  function silhouette(ctx, type, cx, cy, u, color) {
+                    ctx.fillStyle = color
+                    ctx.strokeStyle = color
+                    ctx.lineCap = "round"
+                    switch (type) {
+                      case "armor":
+                        ctx.beginPath()
+                        ctx.moveTo(-0.95 * u + cx, 0.1 * u + cy)
+                        ctx.lineTo(-0.75 * u + cx, -0.12 * u + cy)
+                        ctx.lineTo(0.8 * u + cx, -0.12 * u + cy)
+                        ctx.lineTo(0.95 * u + cx, 0.1 * u + cy)
+                        ctx.lineTo(0.95 * u + cx, 0.3 * u + cy)
+                        ctx.lineTo(-0.95 * u + cx, 0.3 * u + cy)
+                        ctx.closePath(); ctx.fill()
+                        ctx.fillRect(cx - 0.4 * u, cy - 0.4 * u, 0.7 * u, 0.3 * u)
+                        ctx.lineWidth = Math.max(1.5, u * 0.1)
+                        ctx.beginPath(); ctx.moveTo(cx + 0.25 * u, cy - 0.26 * u); ctx.lineTo(cx + 1.15 * u, cy - 0.32 * u); ctx.stroke()
+                        for (var w = 0; w < 5; w++) wheel(ctx, cx - 0.7 * u + w * 0.35 * u, cy + 0.38 * u, u * 0.12)
+                        break
+                      case "recon":
+                        ctx.beginPath()
+                        ctx.moveTo(cx - 0.85 * u, cy + 0.2 * u)
+                        ctx.lineTo(cx - 0.7 * u, cy - 0.15 * u)
+                        ctx.lineTo(cx + 0.6 * u, cy - 0.15 * u)
+                        ctx.lineTo(cx + 0.85 * u, cy + 0.2 * u)
+                        ctx.closePath(); ctx.fill()
+                        ctx.fillRect(cx - 0.25 * u, cy - 0.4 * u, 0.4 * u, 0.28 * u)
+                        wheel(ctx, cx - 0.55 * u, cy + 0.3 * u, u * 0.17)
+                        wheel(ctx, cx + 0.05 * u, cy + 0.3 * u, u * 0.17)
+                        wheel(ctx, cx + 0.6 * u, cy + 0.3 * u, u * 0.17)
+                        break
+                      case "mechInfantry":
+                        ctx.beginPath()
+                        ctx.moveTo(cx - 0.9 * u, cy + 0.2 * u)
+                        ctx.lineTo(cx - 0.9 * u, cy - 0.1 * u)
+                        ctx.lineTo(cx - 0.55 * u, cy - 0.1 * u)
+                        ctx.lineTo(cx - 0.4 * u, cy - 0.35 * u)
+                        ctx.lineTo(cx + 0.85 * u, cy - 0.35 * u)
+                        ctx.lineTo(cx + 0.85 * u, cy + 0.2 * u)
+                        ctx.closePath(); ctx.fill()
+                        wheel(ctx, cx - 0.65 * u, cy + 0.3 * u, u * 0.17)
+                        ctx.fillRect(cx - 0.15 * u, cy + 0.15 * u, 0.95 * u, 0.25 * u)
+                        break
+                      case "infantry":
+                        figure(ctx, cx - 0.4 * u, cy, u)
+                        figure(ctx, cx + 0.4 * u, cy, u)
+                        break
+                      case "eliteInfantry":
+                        figure(ctx, cx - 0.65 * u, cy + 0.05 * u, u)
+                        figure(ctx, cx, cy - 0.1 * u, u)
+                        figure(ctx, cx + 0.65 * u, cy + 0.05 * u, u)
+                        break
+                      case "antiTank":
+                        ctx.beginPath()
+                        ctx.moveTo(cx - 0.35 * u, cy - 0.35 * u)
+                        ctx.lineTo(cx + 0.25 * u, cy - 0.35 * u)
+                        ctx.lineTo(cx + 0.4 * u, cy + 0.15 * u)
+                        ctx.lineTo(cx - 0.5 * u, cy + 0.15 * u)
+                        ctx.closePath(); ctx.fill()
+                        ctx.lineWidth = Math.max(1.5, u * 0.1)
+                        ctx.beginPath(); ctx.moveTo(cx, cy - 0.15 * u); ctx.lineTo(cx + 1.1 * u, cy - 0.45 * u); ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(cx - 0.1 * u, cy + 0.1 * u); ctx.lineTo(cx - 0.9 * u, cy + 0.4 * u); ctx.stroke()
+                        wheel(ctx, cx - 0.3 * u, cy + 0.3 * u, u * 0.17)
+                        wheel(ctx, cx + 0.25 * u, cy + 0.3 * u, u * 0.17)
+                        break
+                      case "artillery":
+                        ctx.lineWidth = Math.max(2, u * 0.16)
+                        ctx.beginPath(); ctx.moveTo(cx - 0.2 * u, cy + 0.1 * u); ctx.lineTo(cx + 0.95 * u, cy - 0.55 * u); ctx.stroke()
+                        ctx.lineWidth = Math.max(1.5, u * 0.1)
+                        ctx.beginPath(); ctx.moveTo(cx - 0.2 * u, cy + 0.15 * u); ctx.lineTo(cx - 1.0 * u, cy + 0.4 * u); ctx.stroke()
+                        ctx.fillRect(cx - 0.45 * u, cy - 0.15 * u, 0.5 * u, 0.3 * u)
+                        wheel(ctx, cx - 0.2 * u, cy + 0.22 * u, u * 0.3)
+                        ctx.fillStyle = pal.snow
+                        wheel(ctx, cx - 0.2 * u, cy + 0.22 * u, u * 0.12)
+                        break
+                    }
+                  }
+
+                  function drawUnit(ctx, unit, cx, cy, s, isSelected, isTarget) {
+                    var u = s * 0.5
+                    var spent = unit.side === "axis" && unit.moved && unit.attacked
+                    ctx.save()
+                    if (spent) ctx.globalAlpha = 0.55
+                    silhouette(ctx, unit.type, cx, cy - s * 0.12, u, unit.side === "axis" ? pal.axisUnit : pal.alliedUnit)
+                    ctx.restore()
+
+                    // Strength box with a nationality chip on its left.
+                    var bw = s * 0.5, bh = s * 0.3
+                    var bx = cx - bw / 2 + s * 0.1, by = cy + s * 0.28
+                    ctx.fillStyle = pal.strengthBox
+                    ctx.fillRect(bx, by, bw, bh)
+                    ctx.strokeStyle = "#222"
+                    ctx.lineWidth = 1
+                    ctx.strokeRect(bx, by, bw, bh)
+                    ctx.fillStyle = "#111"
+                    ctx.font = "bold " + Math.max(8, Math.round(s * 0.26)) + "px sans-serif"
+                    ctx.textAlign = "center"
+                    ctx.textBaseline = "middle"
+                    ctx.fillText(unit.strength, bx + bw / 2, by + bh / 2 + 0.5)
+                    drawFlag(ctx, unit.side, bx - s * 0.24, by + bh * 0.1, s * 0.2, bh * 0.8)
+
+                    for (var e = 0; e < unit.entrenchment; e++) {
+                      ctx.fillStyle = pal.objectiveRing
+                      ctx.fillRect(bx + bw + s * 0.05, by + bh - (e + 1) * bh * 0.3, s * 0.1, bh * 0.22)
+                    }
+
+                    if (isSelected || isTarget) {
+                      hexPath(ctx, cx, cy, s - 2)
+                      ctx.lineWidth = 3
+                      ctx.strokeStyle = isSelected ? "#101010" : "#d8231b"
+                      ctx.stroke()
+                    }
+                  }
+
+                  // ---- frame ----------------------------------------------
                   onPaint: {
                     var ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
@@ -315,53 +588,57 @@ Item {
                     var reach = sel ? Engine.reachable(state, sel) : {}
                     var targets = sel ? Engine.attackTargets(state, sel) : []
                     var hover = root.hoverHex
+                    var row, col, a, c
 
-                    for (var row = 0; row < Scenario.HEIGHT; row++) {
-                      for (var col = 0; col < Scenario.WIDTH; col++) {
-                        var a = Hex.offsetToAxial(col, row)
-                        var c = centerOf(a.q, a.r)
-                        var code = state.terrain[row][col]
+                    for (row = 0; row < Scenario.HEIGHT; row++)
+                      for (col = 0; col < Scenario.WIDTH; col++) {
+                        a = Hex.offsetToAxial(col, row)
+                        c = centerOf(a.q, a.r)
+                        drawTile(ctx, state.terrain[row][col], c.x, c.y, s, a.q, a.r)
+                      }
 
-                        hexPath(ctx, c.x, c.y, s - 1)
-                        ctx.fillStyle = root.terrainColor(code)
-                        ctx.fill()
-                        if (reach[Hex.key(a.q, a.r)] !== undefined) { ctx.fillStyle = "rgba(240, 220, 120, 0.3)"; ctx.fill() }
+                    drawRoads(ctx, s)
+                    drawRivers(ctx, state, s)
+
+                    for (row = 0; row < Scenario.HEIGHT; row++)
+                      for (col = 0; col < Scenario.WIDTH; col++) {
+                        a = Hex.offsetToAxial(col, row)
+                        c = centerOf(a.q, a.r)
+                        if (state.terrain[row][col] === "bridge") drawBridge(ctx, c.x, c.y, s)
+
+                        hexPath(ctx, c.x, c.y, s)
                         ctx.lineWidth = 1
-                        ctx.strokeStyle = "rgba(0,0,0,0.35)"
+                        ctx.strokeStyle = pal.gridLine
                         ctx.stroke()
-
-                        if (code === "bridge") {
-                          ctx.strokeStyle = "#d9c28a"
-                          ctx.lineWidth = Math.max(2, s * 0.12)
-                          ctx.beginPath(); ctx.moveTo(c.x - s * 0.55, c.y); ctx.lineTo(c.x + s * 0.55, c.y); ctx.stroke()
-                        }
+                        if (reach[Hex.key(a.q, a.r)] !== undefined) { ctx.fillStyle = "rgba(250, 225, 90, 0.35)"; ctx.fill() }
 
                         var obj = Engine.objectiveAt(state, a.q, a.r)
                         if (obj) {
-                          ctx.fillStyle = "#e8d060"
+                          hexPath(ctx, c.x, c.y, s - 1.5)
+                          ctx.lineWidth = 2
+                          ctx.strokeStyle = pal.objectiveRing
+                          ctx.stroke()
+                          drawFlag(ctx, obj.owner, c.x - s * 0.62, c.y - s * 0.72, s * 0.3, s * 0.22)
+                          ctx.fillStyle = "#1c1c1c"
                           ctx.textAlign = "center"
                           ctx.textBaseline = "middle"
-                          ctx.font = "bold " + Math.round(s * 0.45) + "px sans-serif"
-                          ctx.fillText("★", c.x, c.y - s * 0.62)
-                          ctx.font = "bold " + Math.max(8, Math.round(s * 0.28)) + "px sans-serif"
-                          ctx.fillStyle = "rgba(255,255,255,0.92)"
-                          ctx.fillText(obj.name, c.x, c.y + s * 0.68)
+                          ctx.font = "bold " + Math.max(8, Math.round(s * 0.24)) + "px sans-serif"
+                          ctx.fillText(obj.name, c.x, c.y + s * 0.78)
                         }
 
                         var unit = Engine.unitAt(state, a.q, a.r)
                         if (unit) {
                           var isTarget = targets.some(function (t) { return t.id === unit.id })
-                          drawCounter(ctx, unit, c.x, c.y, sel && sel.id === unit.id, isTarget)
+                          drawUnit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget)
                         }
 
                         if (hover && hover.q === a.q && hover.r === a.r) {
                           hexPath(ctx, c.x, c.y, s - 2)
                           ctx.lineWidth = 2
-                          ctx.strokeStyle = "rgba(255,255,255,0.85)"
+                          ctx.strokeStyle = "rgba(255,255,255,0.9)"
                           ctx.stroke()
                         }
                       }
-                    }
                   }
 
                   MouseArea {
