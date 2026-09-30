@@ -22,6 +22,7 @@ import "Units.js" as Units
 import "Scenario.js" as Scenario
 import "Engine.js" as Engine
 import "Art.js" as Art
+import "Sprites.js" as Sprites
 
 Item {
   id: root
@@ -284,7 +285,7 @@ Item {
     var unit = Engine.unitAt(gameState, hoverHex.q, hoverHex.r)
     if (unit) {
       var t = Units.typeOf(unit)
-      line += "\n" + unit.name + " -- " + t.label + " " + unit.strength + "/10, " + Engine.xpLabel(unit).toLowerCase() +
+      line += "\n" + unit.name + " -- " + Sprites.labelFor(unit) + ", " + unit.strength + "/10, " + Engine.xpLabel(unit).toLowerCase() +
               (Engine.xpBars(unit) ? " (" + Engine.xpBars(unit) + " bars)" : "") +
               (unit.entrenchment ? ", dug in " + unit.entrenchment : "") +
               (Engine.isSupplied(gameState, unit) ? "" : " -- CUT OFF from supply, no replacements")
@@ -669,7 +670,7 @@ Item {
                   var u = root.selectedUnit()
                   if (!u) return ""
                   var t = Units.typeOf(u)
-                  return t.label + " -- strength " + u.strength + "/10 -- move " + Engine.moveAllowanceOf(gameState, u) +
+                  return t.label + " (" + Sprites.labelFor(u) + ") -- strength " + u.strength + "/10 -- move " + Engine.moveAllowanceOf(gameState, u) +
                          (t.range > 1 ? " -- range " + t.range : "") +
                          "\n" + Engine.xpLabel(u) + " (" + Engine.xpBars(u) + "/5 bars, +" + (Engine.xpBars(u) * 10) + "% attack and defence)" +
                          (u.type === "supply" ? "\nUnarmed. Keeps friends within 2 hexes in supply; +1 replacement step next to it. Stock " + u.stock + "/3." : "") +

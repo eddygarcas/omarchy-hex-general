@@ -102,13 +102,20 @@ phase at triple speed.
 - **Enter** / **Space** ends the turn. **N** starts a new game. **Esc**
   quits; the game is saved and resumes next launch.
 
-The counters are side-specific profiles of the real kit: Panthers and
-Pak 40s, SdKfz 251 half-tracks and Puma armoured cars, Nebelwerfers and
-leFH 18 howitzers, Opel Blitz columns and Stahlhelm infantry on the German
-side; Shermans, M10 tank destroyers, M3 half-tracks, M8 Greyhounds, 105 mm
-howitzers, GMC trucks and M1-helmeted riflemen and paratroopers on the
-American side. Terrain is snow-covered fir forest, ridges, villages with
-their churches, curving rivers and the road net -- all drawn as vector art.
+The counters are hand-drawn 32x16 pixel sprites of what each formation
+actually fielded (`Sprites.js`): Kampfgruppe Peiper's **Tiger II**s, the
+Panzer divisions' and Lehr's **Panthers**, **Panzer IV**s for
+Führer-Begleit and 9. Panzer, **SdKfz 251** half-tracks, **Puma** armoured
+cars, **Pak 40**s, **leFH 18** howitzers and the Werfer brigade's
+**Nebelwerfer**s, **Opel Blitz** columns, Volksgrenadiers in the Stahlhelm
+and Fallschirmjäger with an MG 42; **M4 Shermans** (75 mm), the **76 mm
+M4A3** for 2nd and 4th Armored, a **Firefly** for the British brigade,
+**M18 Hellcats** for the 705th and 811th Tank Destroyer Battalions, **M8
+Greyhounds**, **105 mm M2A1**s and the corps artillery's **155 mm Long
+Tom**s, **GMC** trucks, riflemen in the M1 helmet and paratroopers with
+Thompsons. The sidebar names the equipment. Terrain is snow-covered fir
+forest, ridges, villages with their churches, curving rivers and the road
+net, drawn as vector art.
 
 Victory is judged at the end of each turn on the objective points you hold
 (28 in all: St. Vith 3, Bastogne 4, Marche 3, Malmedy, Houffalize 2 each,

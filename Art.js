@@ -1,5 +1,7 @@
 .pragma library
 
+.import "Sprites.js" as Sprites
+
 // All the map art, drawn on a Canvas 2D context. Terrain tiles, rivers,
 // roads, unit profiles (side-specific, modelled on the real vehicles and
 // kit of December 1944), counters, flags, effects. Everything is vector;
@@ -430,10 +432,11 @@ function silhouette(ctx, unit, cx, cy, u) {
 // Full counter: profile, strength box with nationality chip, entrenchment
 // pips, experience bars, cut-off marker, selection / target ring.
 function counter(ctx, unit, cx, cy, s, opts) {
-  var u = s * 0.55
+  // Pixel sprite at an integer scale so it stays crisp when zoomed.
+  var scale = Math.max(1, Math.round(s * 1.35 / Sprites.WIDTH))
   ctx.save()
   if (opts.spent) ctx.globalAlpha = 0.55
-  silhouette(ctx, unit, cx, cy - s * 0.18, u)
+  Sprites.draw(ctx, Sprites.spriteFor(unit), unit.side, cx, cy - s * 0.2, scale)
   ctx.restore()
 
   var bw = s * 0.5, bh = s * 0.3
