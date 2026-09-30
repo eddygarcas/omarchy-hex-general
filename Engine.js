@@ -40,11 +40,16 @@ function airAvailable(state) {
   return currentWeather(state).air
 }
 
-var AXIS_SORTIES = 1, ALLIED_SORTIES = 2
+var AXIS_SORTIES = 2, ALLIED_SORTIES = 4
+
+// Turn 1 is 16 December 1944.
+function dateOf(turn) {
+  return (15 + turn) + " December"
+}
 
 function buildRoads() {
   var roads = {}
-  Scenario.ROADS.forEach(function (chain) {
+  Scenario.ROAD_CHAINS.forEach(function (chain) {
     chain.forEach(function (h) { var a = Hex.offsetToAxial(h[0], h[1]); roads[Hex.key(a.q, a.r)] = true })
   })
   return roads
@@ -66,7 +71,7 @@ function createState() {
     ai: null,               // per-phase AI bookkeeping, see beginAlliesPhase
     moves: [],              // every move made, for the campaign-map arrows
     arrived: {},            // reinforcement index -> true once placed
-    log: ["Turn 1 -- Axis phase. Fog grounds all aircraft. Move your Kampfgruppen west across the river."],
+    log: ["16 December 1944, 05:30 -- the barrage opens. Fog grounds all aircraft. Break through the Our line and race for the Meuse."],
     selectedUnitId: null,
     gameOver: false,
     resultText: ""
@@ -102,12 +107,22 @@ function claimObjective(state, unit) {
   if (obj) obj.owner = unit.side
 }
 
+// Hex -> living unit index, rebuilt lazily after any change of positions
+// or losses (see touch()). Never saved: see the save replacer in the UI.
+function touch(state) {
+  state._index = null
+}
+
 function unitAt(state, q, r) {
-  for (var i = 0; i < state.units.length; i++) {
-    var u = state.units[i]
-    if (u.strength > 0 && u.q === q && u.r === r) return u
+  if (!state._index) {
+    var index = {}
+    for (var i = 0; i < state.units.length; i++) {
+      var u = state.units[i]
+      if (u.strength > 0) index[Hex.key(u.q, u.r)] = u
+    }
+    state._index = index
   }
-  return null
+  return state._index[Hex.key(q, r)] || null
 }
 
 function unitById(state, id) {
@@ -208,15 +223,16 @@ function moveUnit(state, unitId, q, r) {
   unit.moved = true
   unit.overrun = false
   unit.entrenchment = 0
+  touch(state)
   claimObjective(state, unit)
   return true
 }
 
 // A unit is in supply if it can trace a path to its own map edge (east
-// for the Axis, west for the Allies) through hexes that hold no enemy
-// unit and are not in enemy zone of control -- unless a friendly unit
-// holds that hex -- or if a stocked friendly supply column is within
-// two hexes.
+// for the Axis, the Meuse bank in the west for the Allies) through hexes
+// that hold no enemy unit and are not in enemy zone of control -- unless
+// a friendly unit holds that hex -- or if a stocked friendly supply
+// column is within two hexes.
 var SUPPLY_RADIUS = 2, SUPPLY_STOCK = 3
 
 function supplyColumnNear(state, unit, radius) {
@@ -227,18 +243,29 @@ function supplyColumnNear(state, unit, radius) {
   return found
 }
 
-function isSupplied(state, unit) {
-  return hasSupplyLine(state, unit) || !!supplyColumnNear(state, unit, SUPPLY_RADIUS)
+function homeEdge(side) {
+  return side === "axis" ? Scenario.WIDTH - 1 : 1
 }
 
-function hasSupplyLine(state, unit) {
-  var homeCol = unit.side === "axis" ? Scenario.WIDTH - 1 : 0
+// Every hex a side's supply can reach from its home edge -- one flood
+// fill per side, so painting 60 units stays cheap. The rules are
+// symmetric, so "edge reaches unit" equals "unit reaches edge".
+function supplyField(state, side) {
+  var enemy = enemyOf(side)
   var seen = {}
-  var stack = [{ q: unit.q, r: unit.r }]
-  seen[Hex.key(unit.q, unit.r)] = true
+  var stack = []
+  var edgeCol = homeEdge(side)
+  for (var row = 0; row < Scenario.HEIGHT; row++) {
+    var a = Hex.offsetToAxial(edgeCol, row)
+    var t = terrainAt(state, a.q, a.r)
+    var occ = unitAt(state, a.q, a.r)
+    if (!t || !t.passable || (occ && occ.side === enemy)) continue
+    if (!occ && inEnemyZoc(state, side, a.q, a.r)) continue
+    seen[Hex.key(a.q, a.r)] = true
+    stack.push(a)
+  }
   while (stack.length > 0) {
     var h = stack.pop()
-    if (Hex.axialToOffset(h.q, h.r).col === homeCol) return true
     var ns = Hex.neighbors(h.q, h.r)
     for (var i = 0; i < ns.length; i++) {
       var n = ns[i]
@@ -247,13 +274,21 @@ function hasSupplyLine(state, unit) {
       var terrain = terrainAt(state, n.q, n.r)
       if (!terrain || !terrain.passable) continue
       var occupant = unitAt(state, n.q, n.r)
-      if (occupant && occupant.side !== unit.side) continue
-      if (!occupant && inEnemyZoc(state, unit.side, n.q, n.r)) continue
+      if (occupant && occupant.side === enemy) continue
+      if (!occupant && inEnemyZoc(state, side, n.q, n.r)) continue
       seen[k] = true
       stack.push(n)
     }
   }
-  return false
+  return seen
+}
+
+function hasSupplyLine(state, unit, field) {
+  return !!(field || supplyField(state, unit.side))[Hex.key(unit.q, unit.r)]
+}
+
+function isSupplied(state, unit, field) {
+  return hasSupplyLine(state, unit, field) || !!supplyColumnNear(state, unit, SUPPLY_RADIUS)
 }
 
 // Damaged units that rested (no move, no shot) and are in supply take one
@@ -261,9 +296,10 @@ function hasSupplyLine(state, unit) {
 // Cut-off units get nothing.
 function replacements(state, side) {
   var recovered = 0, cutOff = 0
+  var field = supplyField(state, side)
   livingUnits(state, side).forEach(function (u) {
     if (u.strength >= 10 || u.moved || u.attacked) return
-    if (!isSupplied(state, u)) { cutOff++; return }
+    if (!isSupplied(state, u, field)) { cutOff++; return }
     u.strength = Math.min(10, u.strength + (supplyColumnNear(state, u, 1) ? 2 : 1))
     recovered++
   })
@@ -363,6 +399,7 @@ function resolveCombat(state, attackerId, defenderId) {
   defender.strength = Math.max(0, defender.strength - defenderLoss)
   if (atkType.range === 1) attacker.strength = Math.max(0, attacker.strength - attackerLoss)
   attacker.attacked = true
+  touch(state)
 
   // Overrun: a unit that had not moved yet and destroys an adjacent enemy
   // keeps half its movement to exploit the gap.
@@ -402,9 +439,10 @@ function totalObjectivePoints(state) {
 // Supply columns refill when they can trace a supply line themselves and
 // burn a turn of stock for every turn they are cut off.
 function restockColumns(state, side) {
+  var field = supplyField(state, side)
   livingUnits(state, side).forEach(function (u) {
     if (u.type !== "supply") return
-    if (hasSupplyLine(state, u)) u.stock = SUPPLY_STOCK
+    if (hasSupplyLine(state, u, field)) u.stock = SUPPLY_STOCK
     else {
       u.stock = Math.max(0, u.stock - 1)
       state.log.unshift(u.name + " is cut off -- " + (u.stock > 0 ? u.stock + " turn" + (u.stock > 1 ? "s" : "") + " of stock left." : "stock exhausted."))
@@ -440,6 +478,7 @@ function placeReinforcements(state, side) {
     var o = Hex.axialToOffset(spot.q, spot.r)
     var unit = Scenario.makeUnit("rf" + index, rf.side, rf.type, rf.name, o.col, o.row, 10, rf.xp)
     state.units.push(unit)
+    touch(state)
     claimObjective(state, unit)
     state.arrived[index] = true
     state.log.unshift((side === "axis" ? "Reinforcement: " : "Allied reinforcement: ") + rf.name + " arrives.")
@@ -471,7 +510,7 @@ function threatenedObjectives(state, side) {
   return state.objectives.filter(function (o) {
     var garrison = unitAt(state, o.q, o.r)
     if (garrison && garrison.side === side) return false
-    return livingUnits(state, enemy).some(function (e) { return Hex.distance(e, o) <= 4 })
+    return livingUnits(state, enemy).some(function (e) { return Hex.distance(e, o) <= 5 })
   })
 }
 
@@ -504,6 +543,7 @@ function airStrike(state, side, targetId) {
   var loss = 1 + Math.floor(Math.random() * 2)
   if (terrain.defBonus > 0 || target.entrenchment >= 2) loss = 1
   target.strength = Math.max(0, target.strength - loss)
+  touch(state)
   var who = side === "axis" ? "Luftwaffe" : "Allied fighter-bombers"
   state.log.unshift(who + " strike " + target.name + " -- " + (target.strength <= 0 ? target.name + " destroyed!" : "-" + loss))
   return { kind: "air", side: side, targetId: target.id, to: { q: target.q, r: target.r }, destroyed: target.strength <= 0 }
@@ -583,7 +623,7 @@ function aiSortie(state, unit, events) {
 function aiShiftToObjective(state, unit, claims, events) {
   var targets = threatenedObjectives(state, unit.side).filter(function (o) {
     var d = Hex.distance(unit, o)
-    return d > 1 && d <= 6 && (claims[o.name] || 0) < 2
+    return d > 1 && d <= 8 && (claims[o.name] || 0) < 3
   })
   if (targets.length === 0) return false
   targets.sort(function (a, b) { return Hex.distance(unit, a) - Hex.distance(unit, b) })
@@ -654,7 +694,7 @@ function finishAlliesPhase(state) {
   if (checkVictory(state)) return
   var weather = currentWeather(state)
   state.airStrikes = weather.air ? AXIS_SORTIES : 0
-  state.log.unshift("Turn " + state.turn + " -- Axis phase. " + weather.label +
+  state.log.unshift("Turn " + state.turn + " (" + dateOf(state.turn) + ") -- Axis phase. " + weather.label +
                     (weather.air ? ": air support available." : (weather.movePenalty ? ": movement -" + weather.movePenalty + ", no air." : ": no air.")))
   placeReinforcements(state, "axis")
 }

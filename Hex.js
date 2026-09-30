@@ -69,6 +69,18 @@ function fromPixel(x, y, size) {
   return axialRound(qf, rf)
 }
 
+// Every hex on the straight line between two axial hexes, endpoints
+// included. The tiny nudge keeps ties from flip-flopping between sides.
+function line(a, b) {
+  var n = distance(a, b)
+  var out = []
+  for (var i = 0; i <= n; i++) {
+    var t = n === 0 ? 0 : i / n
+    out.push(axialRound(a.q + (b.q - a.q) * t + 1e-6, a.r + (b.r - a.r) * t + 1e-6))
+  }
+  return out
+}
+
 // Corner points of a hex centred at (cx, cy), pointy-top orientation.
 function corners(cx, cy, size) {
   var pts = []

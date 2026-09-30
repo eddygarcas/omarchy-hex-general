@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launch Hex General. Resolves symlinks so this works from ~/.local/bin.
+dir=$(dirname "$(readlink -f "$0")")
+exec quickshell -n -p "$dir"
