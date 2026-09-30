@@ -215,8 +215,23 @@ function moveUnit(state, unitId, q, r) {
 // A unit is in supply if it can trace a path to its own map edge (east
 // for the Axis, west for the Allies) through hexes that hold no enemy
 // unit and are not in enemy zone of control -- unless a friendly unit
-// holds that hex.
+// holds that hex -- or if a stocked friendly supply column is within
+// two hexes.
+var SUPPLY_RADIUS = 2, SUPPLY_STOCK = 3
+
+function supplyColumnNear(state, unit, radius) {
+  var found = null
+  livingUnits(state, unit.side).forEach(function (u) {
+    if (u.type === "supply" && u.stock > 0 && u.id !== unit.id && Hex.distance(u, unit) <= radius) found = u
+  })
+  return found
+}
+
 function isSupplied(state, unit) {
+  return hasSupplyLine(state, unit) || !!supplyColumnNear(state, unit, SUPPLY_RADIUS)
+}
+
+function hasSupplyLine(state, unit) {
   var homeCol = unit.side === "axis" ? Scenario.WIDTH - 1 : 0
   var seen = {}
   var stack = [{ q: unit.q, r: unit.r }]
@@ -242,13 +257,14 @@ function isSupplied(state, unit) {
 }
 
 // Damaged units that rested (no move, no shot) and are in supply take one
-// step of replacements a turn. Cut-off units get nothing.
+// step of replacements a turn -- two next to a stocked supply column.
+// Cut-off units get nothing.
 function replacements(state, side) {
   var recovered = 0, cutOff = 0
   livingUnits(state, side).forEach(function (u) {
     if (u.strength >= 10 || u.moved || u.attacked) return
     if (!isSupplied(state, u)) { cutOff++; return }
-    u.strength = Math.min(10, u.strength + 1)
+    u.strength = Math.min(10, u.strength + (supplyColumnNear(state, u, 1) ? 2 : 1))
     recovered++
   })
   var who = side === "axis" ? "Axis" : "Allied"
@@ -259,6 +275,7 @@ function replacements(state, side) {
 function attackTargets(state, unit) {
   if (unit.attacked) return []
   var range = Units.typeOf(unit).range
+  if (range === 0) return []
   return state.units.filter(function (other) {
     return other.strength > 0 && other.side !== unit.side && Hex.distance(unit, other) <= range
   })
@@ -291,12 +308,32 @@ function gainXp(state, unit, amount) {
   if (xpBars(unit) > before) state.log.unshift(unit.name + " is now " + xpLabel(unit).toLowerCase() + " (" + xpBars(unit) + " bars).")
 }
 
+// Friendly artillery and anti-tank units adjacent to the defender fire in
+// its support: each adds 40% of its firepower against the attacker's type.
+function supporters(state, defender) {
+  var out = []
+  Hex.neighbors(defender.q, defender.r).forEach(function (h) {
+    var u = unitAt(state, h.q, h.r)
+    if (u && u.side === defender.side && Units.givesSupportFire(u)) out.push(u)
+  })
+  return out
+}
+
+function supportFire(state, defender, attacker) {
+  var hard = Units.isHardTarget(attacker)
+  return supporters(state, defender).reduce(function (sum, u) {
+    var t = Units.typeOf(u)
+    return sum + (hard ? t.atkHard : t.atkSoft) * (u.strength / 10) * xpBonus(u) * 0.4
+  }, 0)
+}
+
 function combatOdds(state, attacker, defender) {
   var atkType = Units.typeOf(attacker)
   var defType = Units.typeOf(defender)
   var atkValue = (Units.isHardTarget(defender) ? atkType.atkHard : atkType.atkSoft) * (attacker.strength / 10) * xpBonus(attacker)
   var terrain = terrainAt(state, defender.q, defender.r)
   var defValue = defType.def * (defender.strength / 10) * (1 + terrain.defBonus * 0.25) * (1 + defender.entrenchment * 0.15) * xpBonus(defender)
+  defValue += supportFire(state, defender, attacker)
   return atkValue / Math.max(0.1, defValue)
 }
 
@@ -334,7 +371,9 @@ function resolveCombat(state, attackerId, defenderId) {
   if (overrun) attacker.overrun = true
   else attacker.moved = true
 
-  var line = attacker.name + " attacks " + defender.name + " (" + ratio.toFixed(1) + ":1) -- "
+  var help = supporters(state, defender)
+  var line = attacker.name + " attacks " + defender.name + " (" + ratio.toFixed(1) + ":1" +
+             (help.length ? ", support fire from " + help.map(function (u) { return u.name }).join(" and ") : "") + ") -- "
   if (defender.strength <= 0) line += defender.name + " destroyed!" + (overrun ? " Overrun -- " + attacker.name + " may advance." : "")
   else if (attacker.strength <= 0) line += attacker.name + " destroyed!"
   else line += defender.name + " -" + defenderLoss + ", " + attacker.name + " -" + attackerLoss
@@ -360,10 +399,24 @@ function totalObjectivePoints(state) {
   return state.objectives.reduce(function (s, o) { return s + o.points }, 0)
 }
 
+// Supply columns refill when they can trace a supply line themselves and
+// burn a turn of stock for every turn they are cut off.
+function restockColumns(state, side) {
+  livingUnits(state, side).forEach(function (u) {
+    if (u.type !== "supply") return
+    if (hasSupplyLine(state, u)) u.stock = SUPPLY_STOCK
+    else {
+      u.stock = Math.max(0, u.stock - 1)
+      state.log.unshift(u.name + " is cut off -- " + (u.stock > 0 ? u.stock + " turn" + (u.stock > 1 ? "s" : "") + " of stock left." : "stock exhausted."))
+    }
+  })
+}
+
 // End of a side's turn: replacements, then units that sat still dig in
 // (up to 3 levels), then everyone gets a fresh turn.
 function resetPhaseFlags(state, side) {
   replacements(state, side)
+  restockColumns(state, side)
   state.units.forEach(function (u) {
     if (u.side !== side) return
     if (!u.moved) u.entrenchment = Math.min(3, u.entrenchment + 1)
@@ -482,9 +535,31 @@ function moveEvent(state, unit, q, r) {
   return { kind: "move", unitId: unit.id, from: from, to: { q: q, r: r } }
 }
 
+// The supply column trails the most damaged friendly unit, keeping out of
+// enemy zones of control.
+function aiSupplyColumn(state, unit, events) {
+  var needy = livingUnits(state, unit.side).filter(function (u) { return u.strength < 10 && u.type !== "supply" })
+  if (needy.length === 0) return false
+  needy.sort(function (a, b) { return a.strength - b.strength })
+  var target = needy[0]
+  if (Hex.distance(unit, target) <= 1) return false
+  var options = reachable(state, unit)
+  var best = null, bestD = Hex.distance(unit, target)
+  for (var k in options) {
+    var h = Hex.parseKey(k)
+    if (inEnemyZoc(state, unit.side, h.q, h.r)) continue
+    var d = Hex.distance(h, target) + options[k] * 0.01
+    if (d < bestD) { bestD = d; best = h }
+  }
+  if (!best) return false
+  state.log.unshift(unit.name + " moves up to resupply " + target.name + ".")
+  events.push(moveEvent(state, unit, best.q, best.r))
+  return true
+}
+
 function aiSortie(state, unit, events) {
   var type = Units.typeOf(unit)
-  if (type.range > 1 || unit.type === "antiTank") return false
+  if (type.range !== 1 || unit.type === "antiTank") return false
   var enemy = nearestEnemy(state, unit, type.move + 1)
   if (!enemy) return false
   var options = reachable(state, unit)
@@ -554,6 +629,10 @@ function aiStep(state) {
     var unit = unitById(state, ai.pending.shift())
     if (!unit || unit.strength <= 0) continue
     var events = []
+    if (unit.type === "supply") {
+      if (aiSupplyColumn(state, unit, events)) return events
+      continue
+    }
     if (aiFireIfPossible(state, unit, events)) {
       if (unit.overrun) aiShiftToObjective(state, unit, ai.claims, events)
       return events
@@ -614,6 +693,7 @@ function endTurn(state) {
 function actionableUnits(state) {
   return livingUnits(state, "axis").filter(function (u) {
     if (u.overrun && !u.moved) return true
+    if (Units.typeOf(u).range === 0) return !u.moved
     return !u.attacked && !(u.moved && attackTargets(state, u).length === 0)
   })
 }

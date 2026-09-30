@@ -92,6 +92,19 @@ an explosion -- before play returns to you.
   units and enemy zones of control (friendly-held hexes count as open).
   A unit that is **cut off** gets a red marker and recovers nothing until
   the pocket is opened again.
+- **Supply columns**: each side has one unarmed truck column (the
+  *Nachschub-Kolonne* and the *Red Ball Express*) carrying three turns of
+  stock. Friends within two hexes of a stocked column count as in supply
+  even inside a pocket, and a unit resting **next to** the column takes two
+  replacement steps instead of one. The column refills whenever it can
+  trace a supply line itself; cut off, it burns a turn of stock per turn.
+  Guard it -- it has almost no defence.
+- **Support fire**: artillery and anti-tank units fire in defence of any
+  adjacent friendly unit that is attacked, adding 40% of their firepower
+  against the attacker's type to the defence. Anti-tank guns next to a
+  town garrison make an armoured assault expensive; artillery does the
+  same against infantry. The hover odds and the battle log show who
+  supported.
 - **Movement arrows**: every move of the battle is drawn campaign-map
   style -- red arrows for the Axis, blue for the Allies -- so you can read
   the whole offensive at a glance. Press **M** to hide or show them.

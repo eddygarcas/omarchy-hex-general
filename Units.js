@@ -39,7 +39,18 @@ var TYPES = {
   recon: {
     label: "Recon", glyph: "RC",
     atkSoft: 2, atkHard: 1, def: 2, move: 6, range: 1, initiative: 4
+  },
+  // Unarmed (range 0): cannot attack, but keeps nearby units in supply and
+  // speeds up their replacements. See Engine.js.
+  supply: {
+    label: "Supply column", glyph: "SP",
+    atkSoft: 0, atkHard: 0, def: 1, move: 4, range: 0, initiative: 0
   }
+}
+
+// Units that add defensive support fire to an adjacent friendly defender.
+function givesSupportFire(unit) {
+  return unit.type === "artillery" || unit.type === "antiTank"
 }
 
 function typeOf(unit) {

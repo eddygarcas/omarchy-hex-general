@@ -218,12 +218,15 @@ Item {
               (unit.entrenchment ? ", dug in " + unit.entrenchment : "") +
               (Engine.isSupplied(gameState, unit) ? "" : " -- CUT OFF from supply, no replacements")
       var sel = selectedUnit()
+      if (unit.type === "supply") line += "\nSupplies friends within 2 hexes; +1 replacement step next to it. Stock: " + unit.stock + "/3 turns"
       if (airMode && unit.side === "allies") {
         var cover = terrain.defBonus > 0 || unit.entrenchment >= 2
         line += "\nAir strike target -- " + (cover ? "in cover, 1 step" : "in the open, 1-2 steps")
       } else if (sel && unit.side === "allies" && Engine.canAttack(gameState, sel, unit)) {
         var odds = Engine.combatOdds(gameState, sel, unit)
-        line += "\nAttack odds " + odds.toFixed(1) + ":1 -- " + Engine.oddsLabel(odds)
+        var help = Engine.supporters(gameState, unit)
+        line += "\nAttack odds " + odds.toFixed(1) + ":1 -- " + Engine.oddsLabel(odds) +
+                (help.length ? "\nSupport fire from " + help.map(function (u) { return u.name }).join(", ") : "")
       }
     }
     return line
@@ -635,6 +638,19 @@ Item {
                         ctx.beginPath(); ctx.moveTo(cx - 0.1 * u, cy + 0.1 * u); ctx.lineTo(cx - 0.9 * u, cy + 0.4 * u); ctx.stroke()
                         wheel(ctx, cx - 0.3 * u, cy + 0.3 * u, u * 0.17)
                         wheel(ctx, cx + 0.25 * u, cy + 0.3 * u, u * 0.17)
+                        break
+                      case "supply":
+                        ctx.fillRect(cx - 0.95 * u, cy - 0.35 * u, 1.15 * u, 0.6 * u)
+                        ctx.beginPath()
+                        ctx.moveTo(cx + 0.2 * u, cy + 0.25 * u)
+                        ctx.lineTo(cx + 0.2 * u, cy - 0.15 * u)
+                        ctx.lineTo(cx + 0.45 * u, cy - 0.15 * u)
+                        ctx.lineTo(cx + 0.7 * u, cy + 0.05 * u)
+                        ctx.lineTo(cx + 0.7 * u, cy + 0.25 * u)
+                        ctx.closePath(); ctx.fill()
+                        wheel(ctx, cx - 0.6 * u, cy + 0.32 * u, u * 0.17)
+                        wheel(ctx, cx - 0.2 * u, cy + 0.32 * u, u * 0.17)
+                        wheel(ctx, cx + 0.45 * u, cy + 0.32 * u, u * 0.17)
                         break
                       case "artillery":
                         ctx.lineWidth = Math.max(2, u * 0.16)
@@ -1060,6 +1076,8 @@ Item {
                     var t = Units.typeOf(u)
                     return t.label + " -- strength " + u.strength + "/10 -- move " + Engine.moveAllowanceOf(gameState, u) +
                            (t.range > 1 ? " -- range " + t.range : "") +
+                           (u.type === "supply" ? "\nUnarmed. Keeps friends within 2 hexes in supply; +1 replacement step next to it. Stock " + u.stock + "/3." : "") +
+                           (Units.givesSupportFire(u) ? "\nGives support fire to adjacent friends under attack." : "") +
                            "\n" + Engine.xpLabel(u) + " (" + Engine.xpBars(u) + "/5 bars, +" + (Engine.xpBars(u) * 10) + "% attack and defence)" +
                            (u.entrenchment ? " -- dug in " + u.entrenchment : "") +
                            (u.overrun && !u.moved ? "\nOverrun! May still advance " + Engine.moveAllowanceOf(gameState, u) + " MP."

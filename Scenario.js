@@ -97,7 +97,8 @@ function makeUnit(id, side, type, name, col, row, strength, xp) {
   return {
     id: id, side: side, type: type, name: name,
     q: a.q, r: a.r, strength: strength || 10, entrenchment: 0, xp: xp || 0,
-    moved: false, attacked: false, overrun: false
+    moved: false, attacked: false, overrun: false,
+    stock: type === "supply" ? 3 : 0    // turns of supply a column carries when cut off
   }
 }
 
@@ -118,6 +119,7 @@ function buildUnits() {
   add("axis", "infantry", "26. Volksgrenadier", 14, 7, 10, 0)
   add("axis", "artillery", "Nebelwerfer-Brigade", 14, 8, 10, 3)
   add("axis", "recon", "Aufklärungs-Abteilung", 15, 8, 10, 3)
+  add("axis", "supply", "Nachschub-Kolonne", 14, 4, 10, 0)
 
   // Allies (AI): green, understrength garrisons in the towns (the 106th
   // and 28th were overstretched and newly arrived), a thin screen on the
@@ -130,6 +132,7 @@ function buildUnits() {
   add("allies", "eliteInfantry", "101st Airborne", 4, 8, 10, 12)    // Bastogne
   add("allies", "armor", "10th Armored (CCB)", 5, 7, 8, 6)
   add("allies", "artillery", "VIII Corps Artillery", 3, 5, 8, 6)    // Houffalize
+  add("allies", "supply", "Red Ball Express", 2, 6, 10, 0)
 
   return units
 }
