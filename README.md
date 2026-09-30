@@ -97,8 +97,18 @@ phase at triple speed.
 - **Movement arrows**: every move of the battle is drawn campaign-map
   style -- red arrows for the Axis, blue for the Allies -- so you can read
   the whole offensive at a glance. Press **M** to hide or show them.
+- **Zoom** with **+** / **-** (or Ctrl + mouse wheel), **0** to fit the
+  whole map again; drag or scroll to pan.
 - **Enter** / **Space** ends the turn. **N** starts a new game. **Esc**
   quits; the game is saved and resumes next launch.
+
+The counters are side-specific profiles of the real kit: Panthers and
+Pak 40s, SdKfz 251 half-tracks and Puma armoured cars, Nebelwerfers and
+leFH 18 howitzers, Opel Blitz columns and Stahlhelm infantry on the German
+side; Shermans, M10 tank destroyers, M3 half-tracks, M8 Greyhounds, 105 mm
+howitzers, GMC trucks and M1-helmeted riflemen and paratroopers on the
+American side. Terrain is snow-covered fir forest, ridges, villages with
+their churches, curving rivers and the road net -- all drawn as vector art.
 
 Victory is judged at the end of each turn on the objective points you hold
 (28 in all: St. Vith 3, Bastogne 4, Marche 3, Malmedy, Houffalize 2 each,
