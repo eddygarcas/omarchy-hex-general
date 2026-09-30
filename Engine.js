@@ -21,6 +21,8 @@ function createState() {
     objectives: Scenario.OBJECTIVES.map(function (o) {
       return { q: o.q, r: o.r, name: o.name, points: o.points, owner: "allies" }
     }),
+    phase: "axis",          // "axis" while the player acts, "allies" during the AI phase
+    ai: null,               // per-phase AI bookkeeping, see beginAlliesPhase
     arrived: {},            // reinforcement index -> true once placed
     log: ["Turn 1 -- Axis phase. Move your Kampfgruppen west across the river."],
     selectedUnitId: null,
@@ -274,27 +276,43 @@ function nearestEnemy(state, unit, maxDist) {
   return best
 }
 
+// Towns with the enemy within four hexes and no friendly garrison on them.
 function threatenedObjectives(state, side) {
   var enemy = enemyOf(side)
   return state.objectives.filter(function (o) {
-    if (objectiveHolder(state, o) === side) return false
+    var garrison = unitAt(state, o.q, o.r)
+    if (garrison && garrison.side === side) return false
     return livingUnits(state, enemy).some(function (e) { return Hex.distance(e, o) <= 4 })
   })
 }
 
 // Artillery always fires (no return fire); everyone else needs odds that
 // won't just bleed the unit out.
-function aiFireIfPossible(state, unit) {
+function aiFireIfPossible(state, unit, events) {
   var targets = attackTargets(state, unit)
   if (targets.length === 0) return false
   targets.sort(function (a, b) { return combatOdds(state, unit, b) - combatOdds(state, unit, a) })
   var odds = combatOdds(state, unit, targets[0])
   if (Units.typeOf(unit).range === 1 && odds < 0.7) return false
-  resolveCombat(state, unit.id, targets[0].id)
+  events.push(attackEvent(state, unit, targets[0]))
   return true
 }
 
-function aiSortie(state, unit) {
+// Resolves the attack and describes it for the panel's animation.
+function attackEvent(state, attacker, defender) {
+  var from = { q: attacker.q, r: attacker.r }, to = { q: defender.q, r: defender.r }
+  resolveCombat(state, attacker.id, defender.id)
+  return { kind: "attack", unitId: attacker.id, targetId: defender.id, from: from, to: to,
+           destroyed: defender.strength <= 0, indirect: Units.typeOf(attacker).range > 1 }
+}
+
+function moveEvent(state, unit, q, r) {
+  var from = { q: unit.q, r: unit.r }
+  moveUnit(state, unit.id, q, r)
+  return { kind: "move", unitId: unit.id, from: from, to: { q: q, r: r } }
+}
+
+function aiSortie(state, unit, events) {
   var type = Units.typeOf(unit)
   if (type.range > 1 || unit.type === "antiTank") return false
   var enemy = nearestEnemy(state, unit, type.move + 1)
@@ -309,15 +327,15 @@ function aiSortie(state, unit) {
     if (odds >= 1.0 && score > bestScore) { bestScore = score; best = h }
   }
   if (!best) return false
-  moveUnit(state, unit.id, best.q, best.r)
   state.log.unshift(unit.name + " advances to engage " + enemy.name + ".")
-  aiFireIfPossible(state, unit)
+  events.push(moveEvent(state, unit, best.q, best.r))
+  aiFireIfPossible(state, unit, events)
   return true
 }
 
 // At most two units answer a call for any one town per phase, and only
 // from nearby -- otherwise the whole line strips itself to plug one gap.
-function aiShiftToObjective(state, unit, claims) {
+function aiShiftToObjective(state, unit, claims, events) {
   var targets = threatenedObjectives(state, unit.side).filter(function (o) {
     var d = Hex.distance(unit, o)
     return d > 1 && d <= 6 && (claims[o.name] || 0) < 2
@@ -334,23 +352,49 @@ function aiShiftToObjective(state, unit, claims) {
   }
   if (!best) return false
   claims[target.name] = (claims[target.name] || 0) + 1
-  moveUnit(state, unit.id, best.q, best.r)
   state.log.unshift(unit.name + " moves to cover " + target.name + ".")
-  aiFireIfPossible(state, unit)
+  events.push(moveEvent(state, unit, best.q, best.r))
+  aiFireIfPossible(state, unit, events)
   return true
 }
 
-function runAlliesPhase(state) {
+// The Allied phase runs one unit at a time so the panel can animate each
+// unit's move and shot before the next unit acts:
+//   beginAlliesPhase -> aiStep (repeat until null) -> finishAlliesPhase
+function beginAlliesPhase(state) {
+  state.phase = "allies"
   state.log.unshift("-- Allied phase --")
   placeReinforcements(state, "allies")
-  var claims = {}
-  livingUnits(state, "allies").forEach(function (unit) {
-    if (aiFireIfPossible(state, unit)) return
-    if (objectiveAt(state, unit.q, unit.r)) return
-    if (aiSortie(state, unit)) return
-    aiShiftToObjective(state, unit, claims)
-  })
+  state.ai = { pending: livingUnits(state, "allies").map(function (u) { return u.id }), claims: {} }
+}
+
+// Returns the events (moves/attacks) of the next unit that does something,
+// or null when every unit has acted.
+function aiStep(state) {
+  var ai = state.ai
+  if (!ai) return null
+  while (ai.pending.length > 0) {
+    var unit = unitById(state, ai.pending.shift())
+    if (!unit || unit.strength <= 0) continue
+    var events = []
+    if (aiFireIfPossible(state, unit, events)) return events
+    if (objectiveAt(state, unit.q, unit.r)) continue
+    if (aiSortie(state, unit, events)) return events
+    if (aiShiftToObjective(state, unit, ai.claims, events)) return events
+  }
+  return null
+}
+
+function finishAlliesPhase(state) {
+  state.ai = null
+  state.phase = "axis"
   resetPhaseFlags(state, "allies")
+  if (checkVictory(state)) return
+  state.turn += 1
+  state.selectedUnitId = null
+  if (checkVictory(state)) return
+  state.log.unshift("Turn " + state.turn + " -- Axis phase.")
+  placeReinforcements(state, "axis")
 }
 
 function checkVictory(state) {
@@ -374,16 +418,13 @@ function checkVictory(state) {
   return state.gameOver
 }
 
+// Whole Allied phase in one go (no animation) -- used by headless tests.
 function endTurn(state) {
   if (state.gameOver) return
   resetPhaseFlags(state, "axis")
-  runAlliesPhase(state)
-  if (checkVictory(state)) return
-  state.turn += 1
-  state.selectedUnitId = null
-  if (checkVictory(state)) return
-  state.log.unshift("Turn " + state.turn + " -- Axis phase.")
-  placeReinforcements(state, "axis")
+  beginAlliesPhase(state)
+  while (aiStep(state)) {}
+  finishAlliesPhase(state)
 }
 
 // Axis units that can still do something this turn, in a stable order.

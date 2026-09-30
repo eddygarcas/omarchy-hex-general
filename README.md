@@ -49,8 +49,10 @@ or add a row to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 
 ## How to play
 
-Each turn you move and attack with every Axis unit, then press **End Turn**;
-the Allied side takes its turn and play returns to you.
+Each turn you move and attack with every Axis unit, then press **End Turn**.
+The Allied side then plays its turn in front of you, one unit at a time --
+each counter slides along its move and every shot is shown as a tracer and
+an explosion -- before play returns to you.
 
 - **Click a unit** to select it. Hexes it can reach are highlighted; enemies
   it can attack get a red ring. **Tab** cycles through units that can still

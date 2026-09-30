@@ -7,10 +7,11 @@
 // the property bindings below (which read `rev` purely as a dependency)
 // re-evaluate even though QML can't see inside a mutated plain object.
 //
-// The map is drawn on a Canvas in the style of 1990s hex wargames: textured
-// terrain tiles, connected rivers and roads, unit silhouettes with a
-// strength box, and owner flags on the objective towns. Everything is
-// procedural -- no image assets.
+// The map is two stacked Canvases in the style of 1990s hex wargames: a
+// static terrain layer (tiles, roads, rivers) painted once per size, and a
+// unit layer repainted on every state change and animation frame. Moves
+// and attacks are queued as animations so the Allied phase plays out one
+// unit at a time. Everything is procedural -- no image assets.
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
@@ -29,7 +30,15 @@ Item {
   property bool opened: false
   property var gameState: Engine.createState()
   property int rev: 0
+  property string phase: "axis"
   property var hoverHex: null   // axial {q, r} under the cursor, or null
+
+  // Animation playback: `anim` is the event being shown (see Engine's
+  // moveEvent/attackEvent), `animT` runs 0 -> 1 over its duration.
+  property var anim: null
+  property real animT: 0
+  property var animQueue: []
+  readonly property bool busy: anim !== null || phase === "allies"
 
   // Largest hex that lets the whole rectangular map fit the map box; the
   // Flickable takes over if the box is ever too small for the 14px floor.
@@ -47,7 +56,12 @@ Item {
   function toggle() { root.opened ? root.close() : root.open("{}") }
 
   function newGame() {
+    animator.stop()
+    pauseTimer.stop()
+    anim = null
+    animQueue = []
     gameState = Engine.createState()
+    phase = "axis"
     hoverHex = null
     rev++
   }
@@ -62,6 +76,7 @@ Item {
   }
 
   function selectNext() {
+    if (busy) return
     var units = Engine.actionableUnits(gameState)
     if (units.length === 0) { select(null); return }
     var idx = -1
@@ -70,7 +85,7 @@ Item {
   }
 
   function handleHexClick(q, r) {
-    if (gameState.gameOver) return
+    if (gameState.gameOver || busy) return
     var sel = selectedUnit()
     var clicked = Engine.unitAt(gameState, q, r)
 
@@ -82,25 +97,83 @@ Item {
 
     if (clicked && clicked.side === "allies") {
       if (Engine.canAttack(gameState, sel, clicked)) {
-        Engine.resolveCombat(gameState, sel.id, clicked.id)
+        var shot = Engine.attackEvent(gameState, sel, clicked)
         if (sel.strength <= 0) gameState.selectedUnitId = null
         Engine.checkVictory(gameState)
         rev++
+        play([shot])
       }
       return
     }
 
-    if (Engine.moveUnit(gameState, sel.id, q, r)) {
+    if (Engine.reachable(gameState, sel)[Hex.key(q, r)] !== undefined) {
+      var step = Engine.moveEvent(gameState, sel, q, r)
       if (Engine.attackTargets(gameState, sel).length === 0) gameState.selectedUnitId = null
       Engine.checkVictory(gameState)
       rev++
+      play([step])
     }
   }
 
   function endTurn() {
     if (gameState.gameOver) { newGame(); return }
-    Engine.endTurn(gameState)
+    if (busy) return
+    Engine.resetPhaseFlags(gameState, "axis")
+    Engine.beginAlliesPhase(gameState)
+    gameState.selectedUnitId = null
+    phase = "allies"
     rev++
+    aiTick()
+  }
+
+  // One Allied unit acts per tick; its events animate, then the next tick
+  // runs after a short pause so the eye can follow.
+  function aiTick() {
+    var events = Engine.aiStep(gameState)
+    if (!events) {
+      Engine.finishAlliesPhase(gameState)
+      phase = "axis"
+      rev++
+      return
+    }
+    rev++
+    play(events)
+  }
+
+  function play(events) {
+    animQueue = animQueue.concat(events)
+    if (!anim) playNext()
+  }
+
+  function playNext() {
+    if (animQueue.length === 0) {
+      anim = null
+      if (phase === "allies" && !gameState.gameOver) pauseTimer.start()
+      return
+    }
+    var next = animQueue[0]
+    animQueue = animQueue.slice(1)
+    anim = next
+    animT = 0
+    animator.duration = next.kind === "move"
+      ? 420 + 220 * Hex.distance(next.from, next.to)
+      : (next.destroyed ? 1300 : 1000)
+    animator.start()
+  }
+
+  NumberAnimation {
+    id: animator
+    target: root
+    property: "animT"
+    from: 0
+    to: 1
+    onFinished: root.playNext()
+  }
+
+  Timer {
+    id: pauseTimer
+    interval: 320
+    onTriggered: root.aiTick()
   }
 
   function hoverText() {
@@ -186,11 +259,16 @@ Item {
               color: Color.foreground
             }
             Text {
-              text: { root.rev; return "Turn " + root.gameState.turn + " / " + Scenario.TURN_LIMIT + " -- " +
-                      (root.gameState.gameOver ? "Battle over" : "Axis phase: move and attack, then End Turn") }
+              text: {
+                root.rev
+                var s = "Turn " + root.gameState.turn + " / " + Scenario.TURN_LIMIT + " -- "
+                if (root.gameState.gameOver) return s + "Battle over"
+                if (root.phase === "allies") return s + "Allied phase: the enemy is moving..."
+                return s + "Axis phase: move and attack, then End Turn"
+              }
               font.pixelSize: Style.font.caption
-              color: Color.foreground
-              opacity: 0.7
+              color: root.phase === "allies" ? Color.accent : Color.foreground
+              opacity: root.phase === "allies" ? 1 : 0.7
             }
           }
 
@@ -235,23 +313,13 @@ Item {
 
               Item {
                 id: mapHolder
-                width: Math.max(mapCanvas.width, mapFlick.width)
-                height: Math.max(mapCanvas.height, mapFlick.height)
+                width: Math.max(terrainCanvas.width, mapFlick.width)
+                height: Math.max(terrainCanvas.height, mapFlick.height)
 
-                Canvas {
-                  id: mapCanvas
-                  anchors.centerIn: parent
-                  width: root.hexSize * (Math.sqrt(3) * Scenario.WIDTH + 2)
-                  height: root.hexSize * (1.5 * Scenario.HEIGHT + 1.5)
+                // ---- shared drawing helpers ----------------------------------
+                QtObject {
+                  id: draw
 
-                  property int paintRev: root.rev
-                  property var paintHover: root.hoverHex
-
-                  onPaintRevChanged: requestPaint()
-                  onPaintHoverChanged: requestPaint()
-                  onWidthChanged: requestPaint()
-
-                  // ---- palette ---------------------------------------------
                   readonly property var pal: ({
                     snow: "#e3e5dd", snowMottle: "rgba(165,172,160,0.28)",
                     tree: "#2d5a36", treeLight: "#4a7d4e", treeShadow: "rgba(0,0,0,0.18)",
@@ -291,8 +359,37 @@ Item {
                     ctx.fill()
                   }
 
-                  // ---- terrain tiles ---------------------------------------
-                  function drawTile(ctx, code, cx, cy, s, q, r) {
+                  function star(ctx, cx, cy, rOuter) {
+                    ctx.beginPath()
+                    for (var i = 0; i < 10; i++) {
+                      var rad = i % 2 === 0 ? rOuter : rOuter * 0.45
+                      var ang = -Math.PI / 2 + i * Math.PI / 5
+                      var px = cx + Math.cos(ang) * rad, py = cy + Math.sin(ang) * rad
+                      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py)
+                    }
+                    ctx.closePath()
+                    ctx.fill()
+                  }
+
+                  function flag(ctx, side, x, y, w, h) {
+                    ctx.fillStyle = "#222"
+                    ctx.fillRect(x - 1, y, 1.5, h + 2)
+                    ctx.fillStyle = side === "axis" ? "#3a3a3a" : "#2b4f8a"
+                    ctx.fillRect(x, y, w, h)
+                    ctx.fillStyle = "#f4f4ee"
+                    if (side === "axis") {
+                      ctx.fillRect(x + w * 0.42, y + h * 0.12, w * 0.16, h * 0.76)
+                      ctx.fillRect(x + w * 0.12, y + h * 0.42, w * 0.76, h * 0.16)
+                    } else {
+                      star(ctx, x + w / 2, y + h / 2, h * 0.36)
+                    }
+                    ctx.strokeStyle = "rgba(0,0,0,0.6)"
+                    ctx.lineWidth = 1
+                    ctx.strokeRect(x, y, w, h)
+                  }
+
+                  // ---- terrain -------------------------------------------------
+                  function tile(ctx, code, cx, cy, s, q, r) {
                     hexPath(ctx, cx, cy, s)
                     ctx.fillStyle = pal.snow
                     ctx.fill()
@@ -351,8 +448,7 @@ Item {
                     ctx.restore()
                   }
 
-                  // ---- linear features: roads and rivers -------------------
-                  function drawRoads(ctx, s) {
+                  function roads(ctx, s) {
                     ctx.lineCap = "round"
                     ctx.lineJoin = "round"
                     for (var pass = 0; pass < 2; pass++) {
@@ -375,7 +471,7 @@ Item {
                     return code === "river" || code === "bridge"
                   }
 
-                  function drawRivers(ctx, state, s) {
+                  function rivers(ctx, state, s) {
                     ctx.lineCap = "round"
                     for (var pass = 0; pass < 2; pass++) {
                       ctx.strokeStyle = pass === 0 ? pal.bank : pal.water
@@ -385,18 +481,15 @@ Item {
                           var a = Hex.offsetToAxial(col, row)
                           if (!isWater(state, a.q, a.r)) continue
                           var c = centerOf(a.q, a.r)
-                          var links = 0
                           var ns = Hex.neighbors(a.q, a.r)
                           for (var i = 0; i < ns.length; i++) {
                             if (!isWater(state, ns[i].q, ns[i].r)) continue
-                            links++
                             var n = centerOf(ns[i].q, ns[i].r)
                             ctx.beginPath()
                             ctx.moveTo(c.x, c.y)
                             ctx.lineTo((c.x + n.x) / 2, (c.y + n.y) / 2)
                             ctx.stroke()
                           }
-                          // Run off the map at the top/bottom edge.
                           if (row === 0 || row === Scenario.HEIGHT - 1) {
                             ctx.beginPath()
                             ctx.moveTo(c.x, c.y)
@@ -408,44 +501,14 @@ Item {
                     }
                   }
 
-                  function drawBridge(ctx, cx, cy, s) {
+                  function bridge(ctx, cx, cy, s) {
                     ctx.fillStyle = pal.bridge
                     ctx.fillRect(cx - s * 0.5, cy - s * 0.09, s * 1.0, s * 0.18)
                     ctx.fillStyle = pal.road
                     ctx.fillRect(cx - s * 0.5, cy - s * 0.05, s * 1.0, s * 0.1)
                   }
 
-                  // ---- objective flags -------------------------------------
-                  function drawFlag(ctx, side, x, y, w, h) {
-                    ctx.fillStyle = "#222"
-                    ctx.fillRect(x - 1, y, 1.5, h + 2)
-                    ctx.fillStyle = side === "axis" ? "#3a3a3a" : "#2b4f8a"
-                    ctx.fillRect(x, y, w, h)
-                    ctx.fillStyle = "#f4f4ee"
-                    if (side === "axis") {
-                      ctx.fillRect(x + w * 0.42, y + h * 0.12, w * 0.16, h * 0.76)
-                      ctx.fillRect(x + w * 0.12, y + h * 0.42, w * 0.76, h * 0.16)
-                    } else {
-                      drawStar(ctx, x + w / 2, y + h / 2, h * 0.36)
-                    }
-                    ctx.strokeStyle = "rgba(0,0,0,0.6)"
-                    ctx.lineWidth = 1
-                    ctx.strokeRect(x, y, w, h)
-                  }
-
-                  function drawStar(ctx, cx, cy, rOuter) {
-                    ctx.beginPath()
-                    for (var i = 0; i < 10; i++) {
-                      var rad = i % 2 === 0 ? rOuter : rOuter * 0.45
-                      var ang = -Math.PI / 2 + i * Math.PI / 5
-                      var px = cx + Math.cos(ang) * rad, py = cy + Math.sin(ang) * rad
-                      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py)
-                    }
-                    ctx.closePath()
-                    ctx.fill()
-                  }
-
-                  // ---- unit silhouettes ------------------------------------
+                  // ---- units ---------------------------------------------------
                   function figure(ctx, x, y, u) {
                     ctx.beginPath(); ctx.arc(x, y - u * 0.55, u * 0.13, 0, Math.PI * 2); ctx.fill()
                     ctx.beginPath()
@@ -542,7 +605,7 @@ Item {
                     }
                   }
 
-                  function drawUnit(ctx, unit, cx, cy, s, isSelected, isTarget) {
+                  function unit(ctx, unit, cx, cy, s, isSelected, isTarget) {
                     var u = s * 0.5
                     var spent = unit.side === "axis" && unit.moved && unit.attacked
                     ctx.save()
@@ -550,7 +613,6 @@ Item {
                     silhouette(ctx, unit.type, cx, cy - s * 0.12, u, unit.side === "axis" ? pal.axisUnit : pal.alliedUnit)
                     ctx.restore()
 
-                    // Strength box with a nationality chip on its left.
                     var bw = s * 0.5, bh = s * 0.3
                     var bx = cx - bw / 2 + s * 0.1, by = cy + s * 0.28
                     ctx.fillStyle = pal.strengthBox
@@ -563,7 +625,7 @@ Item {
                     ctx.textAlign = "center"
                     ctx.textBaseline = "middle"
                     ctx.fillText(unit.strength, bx + bw / 2, by + bh / 2 + 0.5)
-                    drawFlag(ctx, unit.side, bx - s * 0.24, by + bh * 0.1, s * 0.2, bh * 0.8)
+                    flag(ctx, unit.side, bx - s * 0.24, by + bh * 0.1, s * 0.2, bh * 0.8)
 
                     for (var e = 0; e < unit.entrenchment; e++) {
                       ctx.fillStyle = pal.objectiveRing
@@ -578,67 +640,172 @@ Item {
                     }
                   }
 
-                  // ---- frame ----------------------------------------------
+                  // ---- combat effects ------------------------------------------
+                  function ease(t) { return t * t * (3 - 2 * t) }
+
+                  function shot(ctx, ev, t, s) {
+                    var a = centerOf(ev.from.q, ev.from.r)
+                    var b = centerOf(ev.to.q, ev.to.r)
+                    var flight = 0.4
+                    if (t < flight) {
+                      var f = t / flight
+                      var px = a.x + (b.x - a.x) * f
+                      var py = a.y + (b.y - a.y) * f - (ev.indirect ? Math.sin(Math.PI * f) * s * 1.6 : 0)
+                      if (t < 0.12) {
+                        ctx.fillStyle = "rgba(255,240,150," + (1 - t / 0.12) + ")"
+                        star(ctx, a.x + (b.x - a.x) * 0.12, a.y + (b.y - a.y) * 0.12 - s * 0.12, s * 0.28)
+                      }
+                      ctx.strokeStyle = "rgba(255,200,80,0.7)"
+                      ctx.lineWidth = Math.max(1.5, s * 0.06)
+                      ctx.beginPath()
+                      ctx.moveTo(px - (b.x - a.x) * 0.08, py - (b.y - a.y) * 0.08)
+                      ctx.lineTo(px, py)
+                      ctx.stroke()
+                      ctx.fillStyle = "#fff4c0"
+                      ctx.beginPath(); ctx.arc(px, py, Math.max(2, s * 0.08), 0, Math.PI * 2); ctx.fill()
+                      return
+                    }
+                    var e = (t - flight) / (1 - flight)
+                    var scale = ev.destroyed ? 1.5 : 1
+                    var radius = s * (0.25 + 0.85 * e) * scale
+                    var alpha = 1 - e
+                    ctx.fillStyle = "rgba(255,110,20," + (alpha * 0.55) + ")"
+                    ctx.beginPath(); ctx.arc(b.x, b.y, radius, 0, Math.PI * 2); ctx.fill()
+                    ctx.fillStyle = "rgba(255,225,90," + alpha + ")"
+                    ctx.beginPath(); ctx.arc(b.x, b.y, radius * 0.55, 0, Math.PI * 2); ctx.fill()
+                    ctx.strokeStyle = "rgba(255,240,180," + alpha + ")"
+                    ctx.lineWidth = Math.max(1.5, s * 0.06)
+                    for (var i = 0; i < 8; i++) {
+                      var ang = i * Math.PI / 4 + e * 0.6
+                      ctx.beginPath()
+                      ctx.moveTo(b.x + Math.cos(ang) * radius * 0.6, b.y + Math.sin(ang) * radius * 0.6)
+                      ctx.lineTo(b.x + Math.cos(ang) * radius * (1.1 + e * 0.5), b.y + Math.sin(ang) * radius * (1.1 + e * 0.5))
+                      ctx.stroke()
+                    }
+                    if (ev.destroyed) {
+                      for (var k = 0; k < 4; k++) {
+                        var sx = b.x + (k - 1.5) * s * 0.35
+                        var sy = b.y - s * (0.2 + e * 1.4) - k * s * 0.15
+                        ctx.fillStyle = "rgba(70,70,70," + (alpha * 0.7) + ")"
+                        ctx.beginPath(); ctx.arc(sx, sy, s * (0.2 + e * 0.35), 0, Math.PI * 2); ctx.fill()
+                      }
+                    }
+                  }
+                }
+
+                // ---- static layer: terrain, roads, rivers, grid, town labels ----
+                Canvas {
+                  id: terrainCanvas
+                  anchors.centerIn: parent
+                  width: root.hexSize * (Math.sqrt(3) * Scenario.WIDTH + 2)
+                  height: root.hexSize * (1.5 * Scenario.HEIGHT + 1.5)
+                  onWidthChanged: requestPaint()
+
                   onPaint: {
                     var ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
                     var state = root.gameState
                     var s = root.hexSize
-                    var sel = root.selectedUnit()
-                    var reach = sel ? Engine.reachable(state, sel) : {}
-                    var targets = sel ? Engine.attackTargets(state, sel) : []
-                    var hover = root.hoverHex
                     var row, col, a, c
 
                     for (row = 0; row < Scenario.HEIGHT; row++)
                       for (col = 0; col < Scenario.WIDTH; col++) {
                         a = Hex.offsetToAxial(col, row)
-                        c = centerOf(a.q, a.r)
-                        drawTile(ctx, state.terrain[row][col], c.x, c.y, s, a.q, a.r)
+                        c = draw.centerOf(a.q, a.r)
+                        draw.tile(ctx, state.terrain[row][col], c.x, c.y, s, a.q, a.r)
                       }
-
-                    drawRoads(ctx, s)
-                    drawRivers(ctx, state, s)
+                    draw.roads(ctx, s)
+                    draw.rivers(ctx, state, s)
 
                     for (row = 0; row < Scenario.HEIGHT; row++)
                       for (col = 0; col < Scenario.WIDTH; col++) {
                         a = Hex.offsetToAxial(col, row)
-                        c = centerOf(a.q, a.r)
-                        if (state.terrain[row][col] === "bridge") drawBridge(ctx, c.x, c.y, s)
-
-                        hexPath(ctx, c.x, c.y, s)
+                        c = draw.centerOf(a.q, a.r)
+                        if (state.terrain[row][col] === "bridge") draw.bridge(ctx, c.x, c.y, s)
+                        draw.hexPath(ctx, c.x, c.y, s)
                         ctx.lineWidth = 1
-                        ctx.strokeStyle = pal.gridLine
+                        ctx.strokeStyle = draw.pal.gridLine
                         ctx.stroke()
-                        if (reach[Hex.key(a.q, a.r)] !== undefined) { ctx.fillStyle = "rgba(250, 225, 90, 0.35)"; ctx.fill() }
-
                         var obj = Engine.objectiveAt(state, a.q, a.r)
                         if (obj) {
-                          hexPath(ctx, c.x, c.y, s - 1.5)
+                          draw.hexPath(ctx, c.x, c.y, s - 1.5)
                           ctx.lineWidth = 2
-                          ctx.strokeStyle = pal.objectiveRing
+                          ctx.strokeStyle = draw.pal.objectiveRing
                           ctx.stroke()
-                          drawFlag(ctx, obj.owner, c.x - s * 0.62, c.y - s * 0.72, s * 0.3, s * 0.22)
                           ctx.fillStyle = "#1c1c1c"
                           ctx.textAlign = "center"
                           ctx.textBaseline = "middle"
                           ctx.font = "bold " + Math.max(8, Math.round(s * 0.24)) + "px sans-serif"
                           ctx.fillText(obj.name, c.x, c.y + s * 0.78)
                         }
+                      }
+                  }
+                }
+
+                // ---- dynamic layer: highlights, flags, units, effects ----------
+                Canvas {
+                  id: unitCanvas
+                  anchors.fill: terrainCanvas
+
+                  property int paintRev: root.rev
+                  property var paintHover: root.hoverHex
+                  property real paintT: root.animT
+                  property var paintAnim: root.anim
+                  onPaintRevChanged: requestPaint()
+                  onPaintHoverChanged: requestPaint()
+                  onPaintTChanged: requestPaint()
+                  onPaintAnimChanged: requestPaint()
+                  onWidthChanged: requestPaint()
+
+                  onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    var state = root.gameState
+                    var s = root.hexSize
+                    var sel = root.busy ? null : root.selectedUnit()
+                    var reach = sel ? Engine.reachable(state, sel) : {}
+                    var targets = sel ? Engine.attackTargets(state, sel) : []
+                    var hover = root.hoverHex
+                    var anim = root.anim
+                    var movingId = anim && anim.kind === "move" ? anim.unitId : null
+                    var row, col, a, c
+
+                    for (row = 0; row < Scenario.HEIGHT; row++)
+                      for (col = 0; col < Scenario.WIDTH; col++) {
+                        a = Hex.offsetToAxial(col, row)
+                        c = draw.centerOf(a.q, a.r)
+                        if (reach[Hex.key(a.q, a.r)] !== undefined) {
+                          draw.hexPath(ctx, c.x, c.y, s - 1)
+                          ctx.fillStyle = "rgba(250, 225, 90, 0.35)"
+                          ctx.fill()
+                        }
+                        var obj = Engine.objectiveAt(state, a.q, a.r)
+                        if (obj) draw.flag(ctx, obj.owner, c.x - s * 0.62, c.y - s * 0.72, s * 0.3, s * 0.22)
 
                         var unit = Engine.unitAt(state, a.q, a.r)
-                        if (unit) {
+                        if (unit && unit.id !== movingId) {
                           var isTarget = targets.some(function (t) { return t.id === unit.id })
-                          drawUnit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget)
+                          draw.unit(ctx, unit, c.x, c.y, s, sel && sel.id === unit.id, isTarget)
                         }
 
                         if (hover && hover.q === a.q && hover.r === a.r) {
-                          hexPath(ctx, c.x, c.y, s - 2)
+                          draw.hexPath(ctx, c.x, c.y, s - 2)
                           ctx.lineWidth = 2
                           ctx.strokeStyle = "rgba(255,255,255,0.9)"
                           ctx.stroke()
                         }
                       }
+
+                    if (!anim) return
+                    if (anim.kind === "move") {
+                      var mover = Engine.unitById(state, anim.unitId)
+                      var from = draw.centerOf(anim.from.q, anim.from.r)
+                      var to = draw.centerOf(anim.to.q, anim.to.r)
+                      var f = draw.ease(root.animT)
+                      if (mover) draw.unit(ctx, mover, from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f, s, false, false)
+                    } else if (anim.kind === "attack") {
+                      draw.shot(ctx, anim, root.animT, s)
+                    }
                   }
 
                   MouseArea {
@@ -798,9 +965,14 @@ Item {
               height: Style.space(40)
               radius: Style.cornerRadius
               color: Color.accent
+              opacity: root.busy && !root.gameState.gameOver ? 0.45 : 1
               Text {
                 anchors.centerIn: parent
-                text: { root.rev; return root.gameState.gameOver ? "New Game  (N)" : "End Turn  (Enter)" }
+                text: {
+                  root.rev
+                  if (root.gameState.gameOver) return "New Game  (N)"
+                  return root.phase === "allies" ? "Allied phase..." : "End Turn  (Enter)"
+                }
                 color: "#101010"
                 font.bold: true
               }
