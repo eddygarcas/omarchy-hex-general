@@ -69,6 +69,8 @@ an explosion -- before play returns to you.
   strength, the defender's terrain and how long it has been dug in. Units
   that sit still entrench (up to three levels, shown as gold pips).
 - **Artillery** fires from up to three hexes away and takes no return fire.
+- **Overrun**: a unit that has not moved yet and destroys an adjacent enemy
+  may still advance, with half its movement points, to exploit the gap.
 - **Replacements**: a damaged unit that spends a whole turn without moving
   or firing regains one step of strength at the end of it -- as long as it
   can trace a supply line to its own map edge through hexes free of enemy

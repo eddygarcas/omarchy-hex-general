@@ -99,18 +99,18 @@ Item {
     if (clicked && clicked.side === "allies") {
       if (Engine.canAttack(gameState, sel, clicked)) {
         var shot = Engine.attackEvent(gameState, sel, clicked)
-        if (sel.strength <= 0) gameState.selectedUnitId = null
-        Engine.checkVictory(gameState)
+        if (sel.strength <= 0 || !sel.overrun) gameState.selectedUnitId = null
         rev++
         play([shot])
       }
       return
     }
 
+    // Victory is only judged at the end of the turn (see Engine.finishAlliesPhase),
+    // so a town taken now still has to survive the Allied response.
     if (Engine.reachable(gameState, sel)[Hex.key(q, r)] !== undefined) {
       var step = Engine.moveEvent(gameState, sel, q, r)
       if (Engine.attackTargets(gameState, sel).length === 0) gameState.selectedUnitId = null
-      Engine.checkVictory(gameState)
       rev++
       play([step])
     }
@@ -610,7 +610,7 @@ Item {
 
                   function unit(ctx, unit, cx, cy, s, isSelected, isTarget, cutOff) {
                     var u = s * 0.5
-                    var spent = unit.side === "axis" && unit.moved && unit.attacked
+                    var spent = unit.side === "axis" && unit.attacked && !(unit.overrun && !unit.moved)
                     ctx.save()
                     if (spent) ctx.globalAlpha = 0.55
                     silhouette(ctx, unit.type, cx, cy - s * 0.12, u, unit.side === "axis" ? pal.axisUnit : pal.alliedUnit)
@@ -944,7 +944,8 @@ Item {
                     return t.label + " -- strength " + u.strength + "/10 -- move " + t.move +
                            (t.range > 1 ? " -- range " + t.range : "") +
                            (u.entrenchment ? " -- dug in " + u.entrenchment : "") +
-                           (u.attacked ? "\nHas fired this turn." : (u.moved ? "\nHas moved; may still attack." : ""))
+                           (u.overrun && !u.moved ? "\nOverrun! May still advance " + Engine.moveAllowanceOf(u) + " MP."
+                            : (u.attacked ? "\nHas fired this turn." : (u.moved ? "\nHas moved; may still attack." : "")))
                   }
                   font.pixelSize: Style.font.caption
                   color: Color.foreground

@@ -96,7 +96,7 @@ function makeUnit(id, side, type, name, col, row, strength) {
   return {
     id: id, side: side, type: type, name: name,
     q: a.q, r: a.r, strength: strength || 10, entrenchment: 0,
-    moved: false, attacked: false
+    moved: false, attacked: false, overrun: false
   }
 }
 
@@ -117,16 +117,17 @@ function buildUnits() {
   add("axis", "artillery", "Nebelwerfer-Brigade", 14, 8)
   add("axis", "recon", "Aufklärungs-Abteilung", 15, 8)
 
-  // Allies (AI): a thin, green screen on the river line (the 106th and
-  // 28th were overstretched and newly arrived), veterans in the rear.
+  // Allies (AI): green, understrength garrisons in the towns (the 106th
+  // and 28th were overstretched and newly arrived), a thin screen on the
+  // river line, veterans in the rear.
   add("allies", "armor", "7th Armored (CCB)", 4, 1, 8)
-  add("allies", "infantry", "106th Infantry Div.", 6, 2, 6)
-  add("allies", "infantry", "28th Infantry Div.", 8, 3, 6)
+  add("allies", "infantry", "106th Infantry Div.", 5, 1, 7)      // St. Vith
+  add("allies", "infantry", "28th Infantry Div.", 8, 4, 7)       // Clervaux
   add("allies", "antiTank", "823rd TD Battalion", 7, 5, 8)
   add("allies", "infantry", "4th Infantry Div.", 8, 8, 7)
-  add("allies", "eliteInfantry", "101st Airborne", 4, 8)
+  add("allies", "eliteInfantry", "101st Airborne", 4, 8)         // Bastogne
   add("allies", "armor", "10th Armored (CCB)", 5, 7, 8)
-  add("allies", "artillery", "VIII Corps Artillery", 3, 6, 8)
+  add("allies", "artillery", "VIII Corps Artillery", 3, 5, 8)    // Houffalize
 
   return units
 }
@@ -135,7 +136,7 @@ function buildUnits() {
 // (or the nearest free hex if the entry hex is occupied).
 var REINFORCEMENTS = [
   { turn: 3, side: "axis",   type: "armor",         name: "Führer-Begleit-Brigade", col: 15, row: 4 },
-  { turn: 5, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2 },
-  { turn: 7, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5 },
-  { turn: 10, side: "allies", type: "armor",        name: "4th Armored (CCA)",      col: 0,  row: 9 }
+  { turn: 4, side: "allies", type: "eliteInfantry", name: "82nd Airborne",          col: 0,  row: 2 },
+  { turn: 6, side: "allies", type: "armor",         name: "3rd Armored Div.",       col: 0,  row: 5 },
+  { turn: 8, side: "allies", type: "armor",         name: "4th Armored (CCA)",      col: 0,  row: 9 }
 ]

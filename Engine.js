@@ -104,9 +104,20 @@ function inEnemyZoc(state, side, q, r) {
 // Dijkstra over terrain cost. Enemy-occupied hexes block; friendly-occupied
 // hexes can be crossed but not stopped on; entering an enemy zone of
 // control ends the move there (a unit that starts in ZOC may still leave).
+// After an overrun (see resolveCombat) a unit may still move, at half pace.
+function moveAllowanceOf(unit) {
+  var move = Units.typeOf(unit).move
+  return unit.overrun ? Math.floor(move / 2) : move
+}
+
+function canMove(unit) {
+  if (unit.moved) return false
+  return !unit.attacked || unit.overrun
+}
+
 function reachable(state, unit) {
-  if (unit.moved || unit.attacked) return {}
-  var moveAllowance = Units.typeOf(unit).move
+  if (!canMove(unit)) return {}
+  var moveAllowance = moveAllowanceOf(unit)
   var startKey = Hex.key(unit.q, unit.r)
   var costs = {}
   costs[startKey] = 0
@@ -146,13 +157,14 @@ function reachable(state, unit) {
 
 function moveUnit(state, unitId, q, r) {
   var unit = unitById(state, unitId)
-  if (!unit || unit.moved || unit.attacked) return false
+  if (!unit || !canMove(unit)) return false
   var options = reachable(state, unit)
   if (options[Hex.key(q, r)] === undefined) return false
   state.moves.push({ unitId: unit.id, side: unit.side, turn: state.turn, from: { q: unit.q, r: unit.r }, to: { q: q, r: r } })
   unit.q = q
   unit.r = r
   unit.moved = true
+  unit.overrun = false
   unit.entrenchment = 0
   claimObjective(state, unit)
   return true
@@ -249,10 +261,16 @@ function resolveCombat(state, attackerId, defenderId) {
   defender.strength = Math.max(0, defender.strength - defenderLoss)
   if (atkType.range === 1) attacker.strength = Math.max(0, attacker.strength - attackerLoss)
   attacker.attacked = true
-  attacker.moved = true
+
+  // Overrun: a unit that had not moved yet and destroys an adjacent enemy
+  // keeps half its movement to exploit the gap.
+  var overrun = !attacker.moved && defender.strength <= 0 && attacker.strength > 0 &&
+                Hex.distance(attacker, defender) === 1 && moveAllowanceOf(attacker) > 0
+  if (overrun) attacker.overrun = true
+  else attacker.moved = true
 
   var line = attacker.name + " attacks " + defender.name + " (" + ratio.toFixed(1) + ":1) -- "
-  if (defender.strength <= 0) line += defender.name + " destroyed!"
+  if (defender.strength <= 0) line += defender.name + " destroyed!" + (overrun ? " Overrun -- " + attacker.name + " may advance." : "")
   else if (attacker.strength <= 0) line += attacker.name + " destroyed!"
   else line += defender.name + " -" + defenderLoss + ", " + attacker.name + " -" + attackerLoss
   state.log.unshift(line)
@@ -282,6 +300,7 @@ function resetPhaseFlags(state, side) {
     if (!u.moved) u.entrenchment = Math.min(3, u.entrenchment + 1)
     u.moved = false
     u.attacked = false
+    u.overrun = false
   })
 }
 
@@ -425,7 +444,10 @@ function aiStep(state) {
     var unit = unitById(state, ai.pending.shift())
     if (!unit || unit.strength <= 0) continue
     var events = []
-    if (aiFireIfPossible(state, unit, events)) return events
+    if (aiFireIfPossible(state, unit, events)) {
+      if (unit.overrun) aiShiftToObjective(state, unit, ai.claims, events)
+      return events
+    }
     if (objectiveAt(state, unit.q, unit.r)) continue
     if (aiSortie(state, unit, events)) return events
     if (aiShiftToObjective(state, unit, ai.claims, events)) return events
@@ -477,5 +499,8 @@ function endTurn(state) {
 
 // Axis units that can still do something this turn, in a stable order.
 function actionableUnits(state) {
-  return livingUnits(state, "axis").filter(function (u) { return !u.attacked && !(u.moved && attackTargets(state, u).length === 0) })
+  return livingUnits(state, "axis").filter(function (u) {
+    if (u.overrun && !u.moved) return true
+    return !u.attacked && !(u.moved && attackTargets(state, u).length === 0)
+  })
 }
